@@ -1,0 +1,2633 @@
+// =============================================================================
+// JiNANAM Platform — Prisma Schema
+// Multi-tenant Jain community platform: monk tracking, temples, dharamshalas,
+// bookings, donations, events/ticketing, feed, visitors, staff, yatra tours.
+//
+// Conventions (see MASTER PROMPT §6 and DECISIONS.md):
+//  - Soft delete everywhere: deletedAt / deletedById. No hard deletes in the API.
+//  - createdById / updatedById audit columns everywhere mutable.
+//  - JSONB for flexible sub-documents (facilities, visibility configs,
+//    notification payloads, audit diffs, linked-member lists).
+//  - Money as Decimal(12,2) + ISO currency code string.
+//  - Public IDs (JFJT108, JFJM108, ...) are separate from internal cuid PKs;
+//    generated exclusively via the id_sequences-backed ID Generator engine.
+// =============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// =============================================================================
+// 0. ID GENERATOR ENGINE (§4.1)
+// =============================================================================
+
+model IdSequence {
+  prefix    String @id // e.g. "JFJT", "JFMS", "JFJM" ...
+  lastValue Int    @default(107) // next issued value = lastValue + 1 (starts at 108)
+
+  @@map("id_sequences")
+}
+
+// =============================================================================
+// 1. AUTH / IDENTITY / RBAC (§3, §5.1)
+// =============================================================================
+
+enum RoleKey {
+  SUPER_ADMIN
+  TEMPLE_ADMIN
+  DHARAMSHALA_ADMIN
+  JAIN_CENTER_ADMIN
+  MONK_ADMIN
+  STAFF
+  SECURITY_GUARD
+  EVENT_SCANNER
+  PAGE_OWNER
+  MEMBER
+  NON_JAIN_MEMBER
+}
+
+enum PermissionAction {
+  VIEW
+  CREATE
+  EDIT
+  APPROVE
+  REJECT
+  DELETE
+}
+
+enum UserStatus {
+  PENDING_OTP
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+  BLOCKED
+  DELETED
+}
+
+enum DeviceType {
+  ANDROID
+  IOS
+  WEB
+}
+
+/// Auth identity — deliberately separate from Member/Staff/Admin profile data.
+model User {
+  id                 String     @id @default(cuid())
+  publicId           String?    @unique // set once profile (member/staff) is created
+  mobile             String     @unique
+  mobileVerifiedAt   DateTime?
+  whatsapp           String?
+  whatsappVerifiedAt DateTime?
+  email              String?    @unique
+  emailVerifiedAt    DateTime?
+  passwordHash       String?
+  firstName          String?
+  lastName           String?
+  photoUrl           String?
+  primaryRoleKey     RoleKey    @default(MEMBER)
+  status             UserStatus @default(PENDING_OTP)
+  preferredLanguage  String     @default("English")
+  lastLoginAt        DateTime?
+  createdByAdmin     Boolean    @default(false) // admins/staff are never self-registered
+  createdAt          DateTime   @default(now())
+  updatedAt          DateTime   @updatedAt
+  deletedAt          DateTime?
+  deletedById        String?
+
+  member              Member?
+  staff               Staff?
+  userOrganizations   UserOrganization[]
+  permissionOverrides UserPermissionOverride[]
+  devices             UserDevice[]
+  loginHistory        LoginHistory[]
+  auditLogs           AuditLog[]
+  notificationLogs    NotificationLog[]
+
+  @@index([status])
+  @@map("users")
+}
+
+model Role {
+  id          String   @id @default(cuid())
+  key         RoleKey  @unique
+  name        String
+  description String?
+  isSystem    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  permissions RolePermission[]
+
+  @@map("roles")
+}
+
+/// Default permission matrix per role, per module. Super Admin CRUDs this.
+model RolePermission {
+  id        String           @id @default(cuid())
+  roleId    String
+  role      Role             @relation(fields: [roleId], references: [id])
+  module    String // ModuleKey constant, e.g. "EVENTS"
+  action    PermissionAction
+  allowed   Boolean          @default(true)
+  createdAt DateTime         @default(now())
+
+  @@unique([roleId, module, action])
+  @@map("role_permissions")
+}
+
+/// Per-user, per-organization overrides layered on top of role defaults.
+model UserPermissionOverride {
+  id             String           @id @default(cuid())
+  userId         String
+  user           User             @relation(fields: [userId], references: [id])
+  organizationId String?
+  organization   Organization?    @relation(fields: [organizationId], references: [id])
+  module         String
+  action         PermissionAction
+  allowed        Boolean
+  createdById    String?
+  createdAt      DateTime         @default(now())
+
+  @@unique([userId, organizationId, module, action])
+  @@map("user_permission_overrides")
+}
+
+/// Scopes an admin/staff user to one or more organizations (tenant isolation).
+model UserOrganization {
+  id             String       @id @default(cuid())
+  userId         String
+  user           User         @relation(fields: [userId], references: [id])
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  roleKey        RoleKey
+  assignedById   String?
+  createdAt      DateTime     @default(now())
+
+  @@unique([userId, organizationId])
+  @@map("user_organizations")
+}
+
+model UserDevice {
+  id               String     @id @default(cuid())
+  userId           String
+  user             User       @relation(fields: [userId], references: [id])
+  deviceId         String
+  deviceType       DeviceType
+  os               String?
+  appVersion       String?
+  ip               String?
+  refreshTokenHash String?
+  isRevoked        Boolean    @default(false)
+  lastActiveAt     DateTime   @default(now())
+  createdAt        DateTime   @default(now())
+
+  @@unique([userId, deviceId])
+  @@map("user_devices")
+}
+
+model LoginHistory {
+  id                String   @id @default(cuid())
+  userId            String?
+  user              User?    @relation(fields: [userId], references: [id])
+  mobile            String
+  deviceId          String?
+  ip                String?
+  success           Boolean
+  reason            String?
+  flaggedSuspicious Boolean  @default(false)
+  createdAt         DateTime @default(now())
+
+  @@index([mobile])
+  @@map("login_history")
+}
+
+/// Immutable audit trail (§4.4). No update/delete on this model from the API.
+model AuditLog {
+  id             String   @id @default(cuid())
+  userId         String?
+  user           User?    @relation(fields: [userId], references: [id])
+  publicId       String?
+  roleKey        RoleKey?
+  organizationId String?
+  module         String
+  action         String
+  entityType     String
+  entityId       String?
+  before         Json?
+  after          Json?
+  ip             String?
+  deviceInfo     Json?
+  isCritical     Boolean  @default(false)
+  createdAt      DateTime @default(now())
+
+  @@index([organizationId])
+  @@index([module, action])
+  @@index([entityType, entityId])
+  @@map("audit_logs")
+}
+
+// =============================================================================
+// 2. MASTER DATA (§4.8) — Super Admin CRUD, never hardcoded
+// =============================================================================
+
+model Community {
+  id        String    @id @default(cuid())
+  name      String    @unique // Digambar / Shwetambar
+  createdAt DateTime  @default(now())
+  deletedAt DateTime?
+
+  subCommunities SubCommunity[]
+  members        Member[]
+  organizations  Organization[]
+  monks          MonkProfile[]
+
+  @@map("communities")
+}
+
+model SubCommunity {
+  id          String    @id @default(cuid())
+  communityId String
+  community   Community @relation(fields: [communityId], references: [id])
+  name        String
+  deletedAt   DateTime?
+
+  gacchas       Gaccha[]
+  members       Member[]
+  organizations Organization[]
+  monks         MonkProfile[]
+
+  @@unique([communityId, name])
+  @@map("sub_communities")
+}
+
+/// The 83-item Gaccha master list (seeded).
+model Gaccha {
+  id             String       @id @default(cuid())
+  subCommunityId String
+  subCommunity   SubCommunity @relation(fields: [subCommunityId], references: [id])
+  name           String
+  deletedAt      DateTime?
+
+  members       Member[]
+  organizations Organization[]
+  monks         MonkProfile[]
+
+  @@unique([subCommunityId, name])
+  @@map("gacchas")
+}
+
+model TithiCalendarType {
+  id        String    @id @default(cuid())
+  name      String    @unique // Gujarati / Kutchi / Marwari / Hindi / Marathi / Other
+  deletedAt DateTime?
+
+  entries           TithiCalendarEntry[]
+  members           Member[]
+  organizations     Organization[]
+  correctionTickets TithiCorrectionTicket[]
+
+  @@map("tithi_calendar_types")
+}
+
+model TithiCalendarEntry {
+  id             String            @id @default(cuid())
+  calendarTypeId String
+  calendarType   TithiCalendarType @relation(fields: [calendarTypeId], references: [id])
+  year           Int
+  gregorianDate  DateTime
+  tithiName      String
+  description    String?
+  createdAt      DateTime          @default(now())
+
+  @@unique([calendarTypeId, gregorianDate])
+  @@index([calendarTypeId, year])
+  @@map("tithi_calendar_entries")
+}
+
+enum TicketStatusGeneric {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+model TithiCorrectionTicket {
+  id             String              @id @default(cuid())
+  raisedByOrgId  String?
+  raisedByOrg    Organization?       @relation(fields: [raisedByOrgId], references: [id])
+  calendarTypeId String
+  calendarType   TithiCalendarType   @relation(fields: [calendarTypeId], references: [id])
+  date           DateTime
+  issue          String
+  status         TicketStatusGeneric @default(OPEN)
+  resolution     String?
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+
+  @@map("tithi_correction_tickets")
+}
+
+model BhagwanMaster {
+  id        String    @id @default(cuid())
+  name      String    @unique
+  imageUrl  String?
+  deletedAt DateTime?
+
+  organizations Organization[]
+
+  @@map("bhagwan_master")
+}
+
+model BookingCategory {
+  id        String    @id @default(cuid())
+  name      String    @unique
+  deletedAt DateTime?
+
+  bookingItems BookingItem[]
+
+  @@map("booking_categories")
+}
+
+model EventCategory {
+  id        String    @id @default(cuid())
+  name      String    @unique
+  deletedAt DateTime?
+
+  events Event[]
+
+  @@map("event_categories")
+}
+
+model FeedCategory {
+  id        String    @id @default(cuid())
+  name      String    @unique
+  deletedAt DateTime?
+
+  posts FeedPost[]
+
+  @@map("feed_categories")
+}
+
+model OfferCategory {
+  id        String    @id @default(cuid())
+  name      String    @unique
+  deletedAt DateTime?
+
+  offers Offer[]
+
+  @@map("offer_categories")
+}
+
+model NewsCategory {
+  id        String    @id @default(cuid())
+  name      String    @unique
+  deletedAt DateTime?
+
+  news News[]
+
+  @@map("news_categories")
+}
+
+model CommunityPageCategory {
+  id        String    @id @default(cuid())
+  name      String    @unique
+  deletedAt DateTime?
+
+  pages CommunityPage[]
+
+  @@map("community_page_categories")
+}
+
+model SponsorCategory {
+  id        String    @id @default(cuid())
+  name      String    @unique
+  deletedAt DateTime?
+
+  tourSponsors TourSponsor[]
+
+  @@map("sponsor_categories")
+}
+
+model StaffDepartment {
+  id        String    @id @default(cuid())
+  name      String    @unique
+  deletedAt DateTime?
+
+  designations StaffDesignation[]
+  staff        Staff[]
+
+  @@map("staff_departments")
+}
+
+model StaffDesignation {
+  id           String          @id @default(cuid())
+  departmentId String
+  department   StaffDepartment @relation(fields: [departmentId], references: [id])
+  name         String
+  deletedAt    DateTime?
+
+  staff Staff[]
+
+  @@unique([departmentId, name])
+  @@map("staff_designations")
+}
+
+model VolunteerArea {
+  id        String    @id @default(cuid())
+  name      String    @unique
+  deletedAt DateTime?
+
+  opportunities VolunteerOpportunity[]
+
+  @@map("volunteer_areas")
+}
+
+model DonationCategory {
+  id        String    @id @default(cuid())
+  name      String    @unique // General, Gau Seva, ...
+  deletedAt DateTime?
+
+  splits DonationCategorySplit[]
+
+  @@map("donation_categories")
+}
+
+model RelationshipType {
+  id        String    @id @default(cuid())
+  name      String    @unique
+  deletedAt DateTime?
+
+  familyLinks FamilyMember[]
+
+  @@map("relationship_types")
+}
+
+model FacilityMaster {
+  id        String    @id @default(cuid())
+  name      String    @unique
+  deletedAt DateTime?
+
+  @@map("facility_master")
+}
+
+model CounterType {
+  id        String    @id @default(cuid())
+  name      String    @unique // Mantra, TAP, Jatras, Jain Visits...
+  deletedAt DateTime?
+
+  subTypes       CounterSubType[]
+  memberCounters MemberCounter[]
+
+  @@map("counter_types")
+}
+
+model CounterSubType {
+  id            String      @id @default(cuid())
+  counterTypeId String
+  counterType   CounterType @relation(fields: [counterTypeId], references: [id])
+  name          String // Navkar Mantra, Logas, Palitana Jatra...
+  deletedAt     DateTime?
+
+  memberCounters MemberCounter[]
+
+  @@unique([counterTypeId, name])
+  @@map("counter_sub_types")
+}
+
+model TourCategory {
+  id        String    @id @default(cuid())
+  name      String    @unique // 99 / Palitana / Girnar / Sammed Shikharji / Other
+  deletedAt DateTime?
+
+  tours Tour[]
+
+  @@map("tour_categories")
+}
+
+// =============================================================================
+// 3. ORGANIZATIONS — Temples/Derasar, Jain Centers, Dharamshalas (§5.5–5.6)
+// =============================================================================
+
+enum OrganizationType {
+  TEMPLE
+  JAIN_CENTER
+  DHARAMSHALA
+  BHOJANSHALA
+  COMMUNITY_HALL
+  TRUST_OFFICE
+}
+
+enum OrganizationStatus {
+  ACTIVE
+  UNDER_RENOVATION
+  TEMPORARILY_CLOSED
+  PERMANENTLY_CLOSED
+}
+
+enum TempleType {
+  SHIKHAR_BADDHA
+  GHAR_DERASAR
+  JAIN_CENTRE
+}
+
+/// Polymorphic organization core reused by Temples/JCs/Dharamshalas/Bhojanshala/
+/// Community Halls/Trust Offices so bookings/visitors/staff/donations share one FK.
+model Organization {
+  id                      String             @id @default(cuid())
+  publicId                String             @unique
+  type                    OrganizationType
+  name                    String
+  shortName               String?
+  trustName               String?
+  trustRegistrationNumber String?
+  status                  OrganizationStatus @default(ACTIVE)
+  logoUrl                 String?
+  coverUrl                String?
+  communityId             String?
+  community               Community?         @relation(fields: [communityId], references: [id])
+  subCommunityId          String?
+  subCommunity            SubCommunity?      @relation(fields: [subCommunityId], references: [id])
+  gacchaId                String?
+  gaccha                  Gaccha?            @relation(fields: [gacchaId], references: [id])
+  mulNayakBhagwanId       String?
+  mulNayakBhagwan         BhagwanMaster?     @relation(fields: [mulNayakBhagwanId], references: [id])
+  mulNayakImageUrl        String?
+  muritCount              Int?
+  templeType              TempleType?
+  tithiCalendarTypeId     String?
+  tithiCalendarType       TithiCalendarType? @relation(fields: [tithiCalendarTypeId], references: [id])
+  history                 String?
+  addressLine             String?
+  city                    String?
+  state                   String?
+  country                 String?
+  pincode                 String?
+  lat                     Float?
+  lng                     Float?
+  googleMapsLink          String?
+  facilities              Json? // multi-select facility list snapshot
+  hasUpashray             Boolean            @default(false)
+  hasEventHall            Boolean            @default(false)
+  eventHallBookable       Boolean            @default(false)
+  hasBhojanshala          Boolean            @default(false)
+  bankAccountEncrypted    String?
+  bankIfsc                String?
+  upiId                   String?
+  is80gEligible           Boolean            @default(false)
+  csrEligible             Boolean            @default(false)
+  donationQrUrl           String?
+  disclaimerText          String?
+  avgRating               Float              @default(0)
+  followersCount          Int                @default(0)
+  createdById             String?
+  updatedById             String?
+  createdAt               DateTime           @default(now())
+  updatedAt               DateTime           @updatedAt
+  deletedAt               DateTime?
+  deletedById             String?
+
+  gallery                OrganizationGalleryImage[]
+  contacts               OrganizationContact[]
+  trustees               OrganizationTrustee[]
+  volunteers             OrganizationVolunteer[]
+  historyEvents          OrganizationHistoryEvent[]
+  dhajaRecords           DhajaRecord[]
+  reviews                OrganizationReview[]
+  notices                OrganizationNotice[]
+  follows                OrganizationFollow[]
+  socialLinks            OrganizationSocialLink[]
+  userOrganizations      UserOrganization[]
+  permissionOverrides    UserPermissionOverride[]
+  buildings              Building[]
+  bookingItems           BookingItem[]
+  donations              Donation[]
+  events                 Event[]
+  staff                  Staff[]
+  visitorEntries         VisitorEntry[]
+  feedPosts              FeedPost[]
+  news                   News[]
+  announcements          Announcement[]
+  galleryAlbums          GalleryAlbum[]
+  volunteerOpportunities VolunteerOpportunity[]
+  bookingsAsOrg          Booking[]
+  tithiTickets           TithiCorrectionTicket[]
+  supportTickets         SupportTicket[]
+  communicationsFrom     OrgCommunication[]         @relation("CommFromOrg")
+  communicationsTo       OrgCommunication[]         @relation("CommToOrg")
+  MonkProfile            MonkProfile[]
+
+  @@index([type])
+  @@index([lat, lng])
+  @@map("organizations")
+}
+
+model OrganizationGalleryImage {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  imageUrl       String
+  order          Int          @default(0)
+
+  @@map("organization_gallery_images")
+}
+
+model OrganizationContact {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  memberId       String
+  member         Member       @relation(fields: [memberId], references: [id])
+  role           String?
+  otpVerifiedAt  DateTime?
+
+  @@map("organization_contacts")
+}
+
+model OrganizationTrustee {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  memberId       String
+  member         Member       @relation(fields: [memberId], references: [id])
+  designation    String
+
+  @@map("organization_trustees")
+}
+
+model OrganizationVolunteer {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  memberId       String
+  member         Member       @relation(fields: [memberId], references: [id])
+  area           String?
+
+  @@map("organization_volunteers")
+}
+
+enum OrgHistoryEventType {
+  ESTABLISHMENT
+  RENOVATION
+}
+
+model OrganizationHistoryEvent {
+  id              String              @id @default(cuid())
+  organizationId  String
+  organization    Organization        @relation(fields: [organizationId], references: [id])
+  type            OrgHistoryEventType
+  eventDate       DateTime?
+  description     String?
+  linkedMemberIds Json? // array of member publicIds (founders/sponsors)
+
+  @@map("organization_history_events")
+}
+
+enum DhajaStatus {
+  FINALIZED
+  NOT_YET_FINALIZED
+  AVAILABLE
+  BOOKED
+  PENDING
+}
+
+model DhajaRecord {
+  id              String       @id @default(cuid())
+  organizationId  String
+  organization    Organization @relation(fields: [organizationId], references: [id])
+  year            Int
+  dhajaDate       DateTime?
+  descriptionEn   String?
+  descriptionHi   String?
+  linkedMemberIds Json? // array of member publicIds
+  status          DhajaStatus  @default(NOT_YET_FINALIZED)
+  createdAt       DateTime     @default(now())
+
+  @@unique([organizationId, year])
+  @@map("dhaja_records")
+}
+
+model OrganizationReview {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  memberId       String
+  member         Member       @relation(fields: [memberId], references: [id])
+  rating         Int
+  comment        String?
+  adminReply     String?
+  isHidden       Boolean      @default(false)
+  createdAt      DateTime     @default(now())
+  deletedAt      DateTime?
+  deletedById    String?
+
+  @@unique([organizationId, memberId])
+  @@map("organization_reviews")
+}
+
+model OrganizationNotice {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  title          String
+  body           String
+  isPinned       Boolean      @default(false)
+  startDate      DateTime?
+  endDate        DateTime?
+  createdById    String?
+  createdAt      DateTime     @default(now())
+  deletedAt      DateTime?
+
+  @@map("organization_notices")
+}
+
+model OrganizationFollow {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  memberId       String
+  member         Member       @relation(fields: [memberId], references: [id])
+  createdAt      DateTime     @default(now())
+
+  @@unique([organizationId, memberId])
+  @@map("organization_follows")
+}
+
+model OrganizationSocialLink {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  platform       String
+  url            String
+
+  @@map("organization_social_links")
+}
+
+model PathshalaCenter {
+  id              String    @id @default(cuid())
+  name            String
+  addressLine     String?
+  city            String?
+  state           String?
+  country         String?
+  contactMemberId String?
+  contactMember   Member?   @relation(fields: [contactMemberId], references: [id])
+  createdById     String?
+  createdAt       DateTime  @default(now())
+  deletedAt       DateTime?
+
+  @@map("pathshala_centers")
+}
+
+// --- Dharamshala multi-building structure (§5.6) ---
+
+model Building {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  name           String
+  deletedAt      DateTime?
+
+  wings Wing[]
+
+  @@map("buildings")
+}
+
+model Wing {
+  id         String    @id @default(cuid())
+  buildingId String
+  building   Building  @relation(fields: [buildingId], references: [id])
+  name       String
+  floor      String?
+  deletedAt  DateTime?
+
+  rooms RoomOrHall[]
+
+  @@map("wings")
+}
+
+enum RoomType {
+  ROOM
+  HALL
+  DORMITORY
+}
+
+enum RoomStatus {
+  AVAILABLE
+  UNAVAILABLE
+  MAINTENANCE
+}
+
+model RoomOrHall {
+  id           String     @id @default(cuid())
+  wingId       String
+  wing         Wing       @relation(fields: [wingId], references: [id])
+  name         String
+  type         RoomType
+  capacity     Int
+  pricePerUnit Decimal    @default(0) @db.Decimal(12, 2)
+  currency     String     @default("INR")
+  amenities    Json?
+  images       Json?
+  status       RoomStatus @default(AVAILABLE)
+  deletedAt    DateTime?
+
+  tourRoomAssignments TourRoomAssignment[]
+
+  @@map("rooms_and_halls")
+}
+
+// =============================================================================
+// 4. MONK / MS PROFILES (§5.4)
+// =============================================================================
+
+enum MonkGender {
+  SADHU
+  SADHVI
+}
+
+model MonkProfile {
+  id               String        @id @default(cuid())
+  publicId         String        @unique
+  dikshaName       String
+  photoUrl         String?
+  gender           MonkGender
+  dob              DateTime?
+  dobPlace         String?
+  nameBeforeDiksha String?
+  bio              String?
+  dikshaDate       DateTime?
+  dikshaPlace      String?
+  dikshaGuruId     String?
+  dikshaGuru       MonkProfile?  @relation("DikshaGuru", fields: [dikshaGuruId], references: [id])
+  discipleOf       MonkProfile[] @relation("DikshaGuru")
+  communityId      String?
+  community        Community?    @relation(fields: [communityId], references: [id])
+  subCommunityId   String?
+  subCommunity     SubCommunity? @relation(fields: [subCommunityId], references: [id])
+  gacchaId         String?
+  gaccha           Gaccha?       @relation(fields: [gacchaId], references: [id])
+  currentTempleId  String?
+  currentTemple    Organization? @relation(fields: [currentTempleId], references: [id])
+  status           String        @default("ACTIVE")
+  emergencyContact Json?
+  groupId          String?
+  group            MonkGroup?    @relation(fields: [groupId], references: [id])
+  createdById      String?
+  updatedById      String?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+  deletedAt        DateTime?
+  deletedById      String?
+
+  follows        MonkFollow[]
+  devices        Device[]
+  routes         Route[]
+  journeys       Journey[]
+  alerts         Alert[]
+  toursAsPrimary Tour[]       @relation("PrimaryMonk")
+
+  @@index([groupId])
+  @@map("monk_profiles")
+}
+
+model MonkGroup {
+  id           String    @id @default(cuid())
+  name         String
+  leaderMonkId String?
+  createdAt    DateTime  @default(now())
+  deletedAt    DateTime?
+
+  members MonkProfile[]
+  tours   Tour[]
+
+  @@map("monk_groups")
+}
+
+model MonkFollow {
+  id        String      @id @default(cuid())
+  monkId    String
+  monk      MonkProfile @relation(fields: [monkId], references: [id])
+  memberId  String
+  member    Member      @relation(fields: [memberId], references: [id])
+  createdAt DateTime    @default(now())
+
+  @@unique([monkId, memberId])
+  @@map("monk_follows")
+}
+
+// =============================================================================
+// 5. MEMBERS — Jain (JFJM) & Non-Jain (JFNJM) (§5.2–5.3)
+// =============================================================================
+
+enum MemberCategory {
+  JAIN
+  NON_JAIN
+}
+
+enum MemberStatus {
+  PENDING_OTP
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+  BLOCKED
+  DELETED
+}
+
+model Member {
+  id       String         @id @default(cuid())
+  userId   String         @unique
+  user     User           @relation(fields: [userId], references: [id])
+  publicId String         @unique
+  category MemberCategory
+
+  firstName         String
+  middleName        String?
+  surname           String?
+  fullName          String
+  photoUrl          String?
+  gender            String?
+  dob               DateTime?
+  nationality       String?
+  preferredLanguage String    @default("English")
+
+  panEncrypted     String?
+  aadhaarEncrypted String?
+  aadhaarHash      String? @unique // duplicate-prevention lookup only (Phase 1)
+  maritalStatus    String?
+
+  motherTongue        String?
+  communityId         String?
+  community           Community?         @relation(fields: [communityId], references: [id])
+  subCommunityId      String?
+  subCommunity        SubCommunity?      @relation(fields: [subCommunityId], references: [id])
+  gacchaId            String?
+  gaccha              Gaccha?            @relation(fields: [gacchaId], references: [id])
+  tithiCalendarTypeId String?
+  tithiCalendarType   TithiCalendarType? @relation(fields: [tithiCalendarTypeId], references: [id])
+
+  mobile                       String    @unique
+  mobileVerifiedAt             DateTime?
+  whatsapp                     String?
+  whatsappVerifiedAt           DateTime?
+  email                        String?
+  emailVerifiedAt              DateTime?
+  preferredCommunicationMethod String?
+  alternateContact             String?
+
+  currentAddress   Json?
+  permanentAddress Json?
+  sameAsPermanent  Boolean @default(false)
+  nativeVillage    String?
+  currentLat       Float?
+  currentLng       Float?
+
+  visitFrequency          String?
+  favouriteOrganizationId String?
+
+  bloodGroup       String?
+  disability       String?
+  medicalNotes     String?
+  emergencyContact Json?
+
+  profession            String?
+  isVolunteer           Boolean @default(false)
+  volunteerAreas        Json?
+  volunteerAvailability String?
+
+  currencyCode String @default("INR")
+
+  status               MemberStatus @default(PENDING_OTP)
+  isAutoCreated        Boolean      @default(false)
+  activatedAt          DateTime?
+  profileCompletionPct Int          @default(0)
+
+  createdById String?
+  updatedById String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+  deletedById String?
+
+  preferredTemples  MemberPreferredTemple[]
+  additionalLinks   MemberAdditionalLink[]
+  govtDocuments     MemberGovtDocument[]
+  interests         MemberInterest[]
+  familyAsPrimary   FamilyMember[]                 @relation("PrimaryMember")
+  familyAsRelated   FamilyMember[]                 @relation("RelatedMember")
+  notificationPrefs MemberNotificationPreference[]
+  privacySetting    MemberPrivacySetting?
+  consents          MemberConsent[]
+  badges            MemberBadge[]
+  activityAggregate MemberActivityAggregate?
+
+  organizationContacts   OrganizationContact[]
+  organizationTrustees   OrganizationTrustee[]
+  organizationVolunteers OrganizationVolunteer[]
+  organizationReviews    OrganizationReview[]
+  organizationFollows    OrganizationFollow[]
+  monkFollows            MonkFollow[]
+  pathshalaContacts      PathshalaCenter[]
+
+  bookings         Booking[]
+  donations        Donation[]
+  eventRsvps       EventRsvp[]
+  ticketsBought    Ticket[]        @relation("TicketBuyer")
+  ticketsAttending Ticket[]        @relation("TicketAttendee")
+  eventFeedback    EventFeedback[]
+
+  staffProfile Staff?
+
+  visitorEntries VisitorEntry[]
+
+  tourParticipations TourParticipant[] @relation("ParticipantMember")
+  tourParentOf       TourParticipant[] @relation("ParentMember")
+
+  volunteerApplications VolunteerApplication[]
+
+  offerSaves               OfferSave[]
+  newsBookmarks            NewsBookmark[]
+  pollVotes                PollVote[]
+  communityPageMemberships CommunityPageMember[]
+
+  memberCounters MemberCounter[]
+
+  @@index([category])
+  @@index([status])
+  @@index([currentLat, currentLng])
+  @@map("members")
+}
+
+model MemberPreferredTemple {
+  id             String   @id @default(cuid())
+  memberId       String
+  member         Member   @relation(fields: [memberId], references: [id])
+  organizationId String
+  isFavourite    Boolean  @default(false)
+  createdAt      DateTime @default(now())
+
+  @@unique([memberId, organizationId])
+  @@map("member_preferred_temples")
+}
+
+enum LinkTargetType {
+  TEMPLE
+  MONK
+}
+
+model MemberAdditionalLink {
+  id         String         @id @default(cuid())
+  memberId   String
+  member     Member         @relation(fields: [memberId], references: [id])
+  targetType LinkTargetType
+  targetId   String
+  createdAt  DateTime       @default(now())
+
+  @@unique([memberId, targetType, targetId])
+  @@map("member_additional_links")
+}
+
+model MemberGovtDocument {
+  id                 String    @id @default(cuid())
+  memberId           String
+  member             Member    @relation(fields: [memberId], references: [id])
+  docType            String
+  docNumberEncrypted String
+  imageUrl           String?
+  verificationStatus String    @default("PENDING")
+  verifiedAt         DateTime?
+  createdAt          DateTime  @default(now())
+
+  @@map("member_govt_documents")
+}
+
+model MemberInterest {
+  id       String @id @default(cuid())
+  memberId String
+  member   Member @relation(fields: [memberId], references: [id])
+  interest String
+
+  @@unique([memberId, interest])
+  @@map("member_interests")
+}
+
+model FamilyMember {
+  id                 String           @id @default(cuid())
+  primaryMemberId    String
+  primaryMember      Member           @relation("PrimaryMember", fields: [primaryMemberId], references: [id])
+  relatedMemberId    String
+  relatedMember      Member           @relation("RelatedMember", fields: [relatedMemberId], references: [id])
+  relationshipTypeId String
+  relationshipType   RelationshipType @relation(fields: [relationshipTypeId], references: [id])
+  createdAt          DateTime         @default(now())
+
+  @@unique([primaryMemberId, relatedMemberId])
+  @@map("family_members")
+}
+
+enum NotificationCategory {
+  SERVICE
+  MARKETING
+}
+
+model MemberNotificationPreference {
+  id       String               @id @default(cuid())
+  memberId String
+  member   Member               @relation(fields: [memberId], references: [id])
+  channel  String // PUSH | WHATSAPP | SMS | EMAIL | IN_APP
+  category NotificationCategory
+  enabled  Boolean              @default(true)
+
+  @@unique([memberId, channel, category])
+  @@map("member_notification_preferences")
+}
+
+model MemberPrivacySetting {
+  id           String  @id @default(cuid())
+  memberId     String  @unique
+  member       Member  @relation(fields: [memberId], references: [id])
+  showMobile   Boolean @default(false)
+  showAddress  Boolean @default(false)
+  allowContact Boolean @default(true)
+
+  @@map("member_privacy_settings")
+}
+
+model MemberConsent {
+  id           String   @id @default(cuid())
+  memberId     String
+  member       Member   @relation(fields: [memberId], references: [id])
+  consentType  String
+  consentedAt  DateTime @default(now())
+  guardianName String?
+
+  @@map("member_consents")
+}
+
+enum MemberBadgeType {
+  SENIOR_CITIZEN
+  VOLUNTEER
+  VERIFIED
+}
+
+model MemberBadge {
+  id       String          @id @default(cuid())
+  memberId String
+  member   Member          @relation(fields: [memberId], references: [id])
+  badge    MemberBadgeType
+  earnedAt DateTime        @default(now())
+
+  @@unique([memberId, badge])
+  @@map("member_badges")
+}
+
+model MemberActivityAggregate {
+  memberId          String   @id
+  member            Member   @relation(fields: [memberId], references: [id])
+  eventsAttended    Int      @default(0)
+  donationsCount    Int      @default(0)
+  bookingsCount     Int      @default(0)
+  sevaCount         Int      @default(0)
+  toursCount        Int      @default(0)
+  certificatesCount Int      @default(0)
+  updatedAt         DateTime @updatedAt
+
+  @@map("member_activity_aggregates")
+}
+
+model BulkImportBatch {
+  id           String    @id @default(cuid())
+  uploadedById String
+  fileUrl      String
+  status       String    @default("PROCESSING")
+  totalRows    Int       @default(0)
+  successCount Int       @default(0)
+  failureCount Int       @default(0)
+  resultJson   Json?
+  createdAt    DateTime  @default(now())
+  completedAt  DateTime?
+
+  @@map("bulk_import_batches")
+}
+
+// =============================================================================
+// 6. STAFF (§5.12)
+// =============================================================================
+
+enum EmploymentStatus {
+  ACTIVE
+  INACTIVE
+  RESIGNED
+  TERMINATED
+  RETIRED
+}
+
+model Staff {
+  id                   String            @id @default(cuid())
+  publicId             String            @unique
+  userId               String            @unique
+  user                 User              @relation(fields: [userId], references: [id])
+  memberId             String            @unique // linked JFJM/JFNJM
+  member               Member            @relation(fields: [memberId], references: [id])
+  organizationId       String
+  organization         Organization      @relation(fields: [organizationId], references: [id])
+  departmentId         String?
+  department           StaffDepartment?  @relation(fields: [departmentId], references: [id])
+  designationId        String?
+  designation          StaffDesignation? @relation(fields: [designationId], references: [id])
+  joiningDate          DateTime?
+  employmentStatus     EmploymentStatus  @default(ACTIVE)
+  aadhaarEncrypted     String?
+  panEncrypted         String?
+  addresses            Json?
+  emergencyMedicalInfo Json? // authorized admins only in serializer
+  qrToken              String?           @unique
+  createdById          String?
+  updatedById          String?
+  createdAt            DateTime          @default(now())
+  updatedAt            DateTime          @updatedAt
+  deletedAt            DateTime?
+  deletedById          String?
+
+  documents             StaffDocument[]
+  permissions           StaffModulePermission[]
+  attendance            StaffAttendance[]
+  leaves                StaffLeave[]
+  shifts                StaffShift[]
+  activityLogs          StaffActivityLog[]
+  scannedTickets        Ticket[]                @relation("ScannedByStaff")
+  visitorEntriesHandled VisitorEntry[]          @relation("HandledByGuard")
+
+  @@map("staff")
+}
+
+model StaffDocument {
+  id                 String    @id @default(cuid())
+  staffId            String
+  staff              Staff     @relation(fields: [staffId], references: [id])
+  docType            String
+  docNumberEncrypted String
+  imageUrl           String?
+  expiryDate         DateTime?
+  isCurrent          Boolean   @default(true)
+  replacesDocumentId String?
+  createdAt          DateTime  @default(now())
+
+  @@map("staff_documents")
+}
+
+model StaffModulePermission {
+  id      String @id @default(cuid())
+  staffId String
+  staff   Staff  @relation(fields: [staffId], references: [id])
+  module  String
+  actions Json // PermissionAction[]
+
+  @@unique([staffId, module])
+  @@map("staff_module_permissions")
+}
+
+model StaffAttendance {
+  id         String    @id @default(cuid())
+  staffId    String
+  staff      Staff     @relation(fields: [staffId], references: [id])
+  checkInAt  DateTime  @default(now())
+  checkOutAt DateTime?
+  method     String    @default("MANUAL") // QR | MANUAL
+  location   Json?
+
+  @@index([staffId, checkInAt])
+  @@map("staff_attendance")
+}
+
+model StaffLeave {
+  id           String   @id @default(cuid())
+  staffId      String
+  staff        Staff    @relation(fields: [staffId], references: [id])
+  type         String
+  startDate    DateTime
+  endDate      DateTime
+  status       String   @default("PENDING")
+  reason       String?
+  approvedById String?
+  createdAt    DateTime @default(now())
+
+  @@map("staff_leaves")
+}
+
+model StaffShift {
+  id              String   @id @default(cuid())
+  staffId         String
+  staff           Staff    @relation(fields: [staffId], references: [id])
+  date            DateTime
+  startTime       DateTime
+  endTime         DateTime
+  overtimeMinutes Int      @default(0)
+
+  @@map("staff_shifts")
+}
+
+model StaffActivityLog {
+  id        String   @id @default(cuid())
+  staffId   String
+  staff     Staff    @relation(fields: [staffId], references: [id])
+  module    String
+  action    String
+  device    String?
+  ip        String?
+  createdAt DateTime @default(now())
+
+  @@map("staff_activity_logs")
+}
+
+// =============================================================================
+// 7. UNIFIED BOOKING & RESERVATION ENGINE (§5.7)
+// =============================================================================
+
+enum BookingType {
+  FREE
+  PAID
+}
+
+enum DurationType {
+  HOURLY
+  HALF_DAY
+  FULL_DAY
+  MULTI_DAY
+  CUSTOM_SLOT
+}
+
+model BookingItem {
+  id                  String          @id @default(cuid())
+  organizationId      String
+  organization        Organization    @relation(fields: [organizationId], references: [id])
+  name                String
+  categoryId          String
+  category            BookingCategory @relation(fields: [categoryId], references: [id])
+  description         String?
+  images              Json?
+  termsAndConditions  String?
+  guidelines          String?
+  cancellationPolicy  String?
+  type                BookingType
+  durationType        DurationType
+  capacityMaxBookings Int?
+  capacityMaxPeople   Int?
+  availabilityConfig  Json? // days, slots, blackout dates handled via BookingBlackoutDate too
+  chargeAmount        Decimal         @default(0) @db.Decimal(12, 2)
+  currency            String          @default("INR")
+  paymentType         String? // BANK_TRANSFER | UPI | QR
+  bankDetails         Json?
+  paymentWindowHours  Int             @default(24)
+  status              String          @default("ACTIVE")
+  createdById         String?
+  updatedById         String?
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+  deletedAt           DateTime?
+
+  blackoutDates        BookingBlackoutDate[]
+  internalReservations BookingInternalReservation[]
+  bookings             Booking[]
+
+  @@map("booking_items")
+}
+
+model BookingBlackoutDate {
+  id            String      @id @default(cuid())
+  bookingItemId String
+  bookingItem   BookingItem @relation(fields: [bookingItemId], references: [id])
+  date          DateTime
+  reason        String?
+
+  @@unique([bookingItemId, date])
+  @@map("booking_blackout_dates")
+}
+
+model BookingInternalReservation {
+  id            String      @id @default(cuid())
+  bookingItemId String
+  bookingItem   BookingItem @relation(fields: [bookingItemId], references: [id])
+  date          DateTime
+  slot          String?
+  reason        String
+  createdById   String?
+  createdAt     DateTime    @default(now())
+
+  @@map("booking_internal_reservations")
+}
+
+enum BookingStatus {
+  SUBMITTED
+  PENDING_APPROVAL
+  APPROVED
+  PAYMENT_PENDING
+  PAYMENT_VERIFICATION
+  CONFIRMED
+  REJECTED
+  CANCELLED
+  COMPLETED
+  EXPIRED
+}
+
+model Booking {
+  id                     String        @id @default(cuid())
+  publicId               String        @unique
+  bookingItemId          String
+  bookingItem            BookingItem   @relation(fields: [bookingItemId], references: [id])
+  organizationId         String
+  organization           Organization  @relation(fields: [organizationId], references: [id])
+  memberId               String
+  member                 Member        @relation(fields: [memberId], references: [id])
+  dateFrom               DateTime
+  dateTo                 DateTime?
+  slot                   String?
+  peopleCount            Int           @default(1)
+  amount                 Decimal       @default(0) @db.Decimal(12, 2)
+  currency               String        @default("INR")
+  status                 BookingStatus @default(SUBMITTED)
+  paymentWindowExpiresAt DateTime?
+  paymentReference       String?
+  paymentProofUrl        String?
+  paymentNotes           String?
+  rejectionReason        String?
+  idempotencyKey         String?       @unique
+  createdById            String?
+  updatedById            String?
+  createdAt              DateTime      @default(now())
+  updatedAt              DateTime      @updatedAt
+  deletedAt              DateTime?
+
+  statusHistory BookingStatusHistory[]
+  receipt       Receipt?
+
+  @@index([organizationId, status])
+  @@index([memberId])
+  @@map("bookings")
+}
+
+model BookingStatusHistory {
+  id          String        @id @default(cuid())
+  bookingId   String
+  booking     Booking       @relation(fields: [bookingId], references: [id])
+  status      BookingStatus
+  note        String?
+  changedById String?
+  changedAt   DateTime      @default(now())
+
+  @@map("booking_status_history")
+}
+
+enum ReceiptType {
+  BOOKING
+  DONATION
+  TICKET
+}
+
+model Receipt {
+  id             String      @id @default(cuid())
+  publicId       String      @unique
+  type           ReceiptType
+  organizationId String?
+  memberId       String?
+  bookingId      String?     @unique
+  booking        Booking?    @relation(fields: [bookingId], references: [id])
+  donationId     String?     @unique
+  donation       Donation?   @relation(fields: [donationId], references: [id])
+  amount         Decimal     @db.Decimal(12, 2)
+  currency       String      @default("INR")
+  pdfUrl         String?
+  issuedAt       DateTime    @default(now())
+
+  @@map("receipts")
+}
+
+// =============================================================================
+// 8. DONATIONS (§5.8)
+// =============================================================================
+
+enum DonationFlowType {
+  ORG_MANUAL
+  PLATFORM_ONLINE
+  MUSIC_FESTIVAL
+}
+
+enum DonationStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+model DonationCampaignConfig {
+  id          String           @id @default(cuid())
+  type        DonationFlowType // PLATFORM_ONLINE | MUSIC_FESTIVAL
+  message     String?
+  isActive    Boolean          @default(true)
+  updatedById String?
+  updatedAt   DateTime         @updatedAt
+
+  @@unique([type])
+  @@map("donation_campaign_configs")
+}
+
+model Donation {
+  id                   String           @id @default(cuid())
+  publicId             String           @unique
+  flowType             DonationFlowType
+  organizationId       String?
+  organization         Organization?    @relation(fields: [organizationId], references: [id])
+  memberId             String
+  member               Member           @relation(fields: [memberId], references: [id])
+  totalAmount          Decimal          @db.Decimal(12, 2)
+  currency             String           @default("INR")
+  transactionReference String?
+  proofUrl             String?
+  status               DonationStatus   @default(PENDING)
+  verifiedById         String?
+  verifiedAt           DateTime?
+  rejectionReason      String?
+  paymentGatewayRef    String?
+  createdById          String?
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
+
+  categorySplits DonationCategorySplit[]
+  receipt        Receipt?
+
+  @@index([organizationId, status])
+  @@index([memberId])
+  @@map("donations")
+}
+
+model DonationCategorySplit {
+  id                 String           @id @default(cuid())
+  donationId         String
+  donation           Donation         @relation(fields: [donationId], references: [id])
+  donationCategoryId String
+  donationCategory   DonationCategory @relation(fields: [donationCategoryId], references: [id])
+  amount             Decimal          @db.Decimal(12, 2)
+
+  @@map("donation_category_splits")
+}
+
+// =============================================================================
+// 9. EVENT MANAGEMENT SYSTEM (§5.9)
+// =============================================================================
+
+enum EventStatus {
+  DRAFT
+  PUBLISHED
+  RSVP_SALES_OPEN
+  LIVE
+  COMPLETED
+  GALLERY_UPLOADED
+  ARCHIVED
+}
+
+model Event {
+  id                 String         @id @default(cuid())
+  publicId           String         @unique
+  organizationId     String
+  organization       Organization   @relation(fields: [organizationId], references: [id])
+  title              String
+  bannerUrl          String?
+  categoryId         String?
+  category           EventCategory? @relation(fields: [categoryId], references: [id])
+  description        String?
+  venue              String?
+  lat                Float?
+  lng                Float?
+  startAt            DateTime
+  endAt              DateTime
+  attachments        Json?
+  visibilityConfig   Json? // geo levels/GPS radius + community/sect + followers + linked members
+  rsvpCapacity       Int?
+  waitingListEnabled Boolean        @default(true)
+  isPaid             Boolean        @default(false)
+  status             EventStatus    @default(DRAFT)
+  createdById        String?
+  updatedById        String?
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+  deletedAt          DateTime?
+
+  rsvps            EventRsvp[]
+  ticketCategories TicketCategory[]
+  tickets          Ticket[]
+  galleryImages    EventGalleryImage[]
+  videoLinks       EventVideoLink[]
+  feedback         EventFeedback[]
+  seatingSections  SeatingSection[]
+
+  @@index([organizationId, status])
+  @@index([lat, lng])
+  @@map("events")
+}
+
+enum RsvpStatus {
+  CONFIRMED
+  WAITING_LIST
+  CANCELLED
+}
+
+model EventRsvp {
+  id                  String     @id @default(cuid())
+  eventId             String
+  event               Event      @relation(fields: [eventId], references: [id])
+  memberId            String
+  member              Member     @relation(fields: [memberId], references: [id])
+  attendeeCount       Int        @default(1)
+  status              RsvpStatus @default(CONFIRMED)
+  waitingListPosition Int?
+  promotedAt          DateTime?
+  createdAt           DateTime   @default(now())
+
+  @@unique([eventId, memberId])
+  @@map("event_rsvps")
+}
+
+model TicketCategory {
+  id               String    @id @default(cuid())
+  eventId          String
+  event            Event     @relation(fields: [eventId], references: [id])
+  name             String
+  price            Decimal   @db.Decimal(12, 2)
+  currency         String    @default("INR")
+  capacity         Int
+  description      String?
+  saleStartAt      DateTime?
+  saleEndAt        DateTime?
+  visibilityConfig Json?
+  deletedAt        DateTime?
+
+  tickets Ticket[]
+
+  @@map("ticket_categories")
+}
+
+enum TicketStatus {
+  PENDING_PAYMENT
+  PAYMENT_SUCCESSFUL
+  TICKET_GENERATED
+  CHECKED_IN
+  CANCELLED
+  REFUNDED_MANUAL
+  EXPIRED
+}
+
+model Ticket {
+  id               String         @id @default(cuid())
+  publicId         String         @unique
+  ticketCategoryId String
+  ticketCategory   TicketCategory @relation(fields: [ticketCategoryId], references: [id])
+  eventId          String
+  event            Event          @relation(fields: [eventId], references: [id])
+  bookingGroupId   String? // groups tickets purchased in one checkout
+  buyerMemberId    String
+  buyerMember      Member         @relation("TicketBuyer", fields: [buyerMemberId], references: [id])
+  attendeeMemberId String?
+  attendeeMember   Member?        @relation("TicketAttendee", fields: [attendeeMemberId], references: [id])
+  attendeeName     String?
+  attendeeGender   String?
+  attendeeAge      Int?
+  seatId           String?        @unique
+  seat             Seat?          @relation(fields: [seatId], references: [id])
+  status           TicketStatus   @default(PENDING_PAYMENT)
+  qrToken          String         @unique
+  paymentRef       String?
+  amount           Decimal        @db.Decimal(12, 2)
+  currency         String         @default("INR")
+  checkedInAt      DateTime?
+  checkedInById    String?
+  checkedInBy      Staff?         @relation("ScannedByStaff", fields: [checkedInById], references: [id])
+  scanHistory      Json? // append-only log of scan attempts incl. duplicates
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  @@index([eventId, status])
+  @@map("tickets")
+}
+
+enum SeatingMode {
+  OPEN
+  RESERVED
+}
+
+model SeatingSection {
+  id      String      @id @default(cuid())
+  eventId String
+  event   Event       @relation(fields: [eventId], references: [id])
+  name    String
+  mode    SeatingMode @default(OPEN)
+
+  rows SeatingRow[]
+
+  @@map("seating_sections")
+}
+
+model SeatingRow {
+  id        String         @id @default(cuid())
+  sectionId String
+  section   SeatingSection @relation(fields: [sectionId], references: [id])
+  name      String
+
+  seats Seat[]
+
+  @@map("seating_rows")
+}
+
+enum SeatStatus {
+  AVAILABLE
+  LOCKED
+  BOOKED
+  UNAVAILABLE
+}
+
+model Seat {
+  id            String     @id @default(cuid())
+  rowId         String
+  row           SeatingRow @relation(fields: [rowId], references: [id])
+  label         String
+  status        SeatStatus @default(AVAILABLE)
+  lockToken     String?
+  lockExpiresAt DateTime?
+
+  ticket Ticket?
+
+  @@unique([rowId, label])
+  @@map("seats")
+}
+
+model EventGalleryImage {
+  id        String   @id @default(cuid())
+  eventId   String
+  event     Event    @relation(fields: [eventId], references: [id])
+  imageUrl  String
+  order     Int      @default(0)
+  createdAt DateTime @default(now())
+
+  @@map("event_gallery_images")
+}
+
+model EventVideoLink {
+  id      String @id @default(cuid())
+  eventId String
+  event   Event  @relation(fields: [eventId], references: [id])
+  url     String
+
+  @@map("event_video_links")
+}
+
+model EventFeedback {
+  id        String   @id @default(cuid())
+  eventId   String
+  event     Event    @relation(fields: [eventId], references: [id])
+  memberId  String
+  member    Member   @relation(fields: [memberId], references: [id])
+  rating    Int
+  comment   String?
+  createdAt DateTime @default(now())
+
+  @@unique([eventId, memberId])
+  @@map("event_feedback")
+}
+
+enum SupportTicketType {
+  PAID_EVENT_REQUEST
+  EVENT_DELETE_REQUEST
+  CALENDAR_CORRECTION
+  INCORRECT_INFO
+  OTHER
+}
+
+model SupportTicket {
+  id                String              @id @default(cuid())
+  publicId          String              @unique
+  type              SupportTicketType
+  raisedByUserId    String
+  organizationId    String?
+  organization      Organization?       @relation(fields: [organizationId], references: [id])
+  subject           String
+  description       String?
+  relatedEntityType String?
+  relatedEntityId   String?
+  status            TicketStatusGeneric @default(OPEN)
+  resolution        String?
+  assignedToUserId  String?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  @@index([status])
+  @@map("support_tickets")
+}
+
+// =============================================================================
+// 10. MS TRACKING, ROUTES, JOURNEYS, DEVICES, ALERTS (§5.10)
+// =============================================================================
+
+model Device {
+  id        String       @id @default(cuid())
+  publicId  String       @unique
+  monkId    String?
+  monk      MonkProfile? @relation(fields: [monkId], references: [id])
+  type      String       @default("GPS_TRACKER")
+  status    String       @default("ACTIVE")
+  createdAt DateTime     @default(now())
+
+  simRecords    SimRecord[]
+  locationPings LocationPing[]
+  alerts        Alert[]
+
+  @@map("devices")
+}
+
+model SimRecord {
+  id             String    @id @default(cuid())
+  deviceId       String
+  device         Device    @relation(fields: [deviceId], references: [id])
+  operator       String?
+  msisdn         String?
+  validityStart  DateTime?
+  validityExpiry DateTime?
+
+  @@map("sim_records")
+}
+
+model Route {
+  id          String      @id @default(cuid())
+  name        String
+  monkId      String
+  monk        MonkProfile @relation(fields: [monkId], references: [id])
+  journeyDate DateTime
+  stops       Json // [{order, templeId, templeName, expectedArrival, status}]
+  createdById String?
+  createdAt   DateTime    @default(now())
+  deletedAt   DateTime?
+
+  journeys Journey[]
+
+  @@map("routes")
+}
+
+model Journey {
+  id               String      @id @default(cuid())
+  routeId          String
+  route            Route       @relation(fields: [routeId], references: [id])
+  monkId           String
+  monk             MonkProfile @relation(fields: [monkId], references: [id])
+  currentStopIndex Int         @default(0)
+  status           String      @default("IN_PROGRESS")
+  startedAt        DateTime    @default(now())
+  completedAt      DateTime?
+
+  events JourneyEvent[]
+
+  @@map("journeys")
+}
+
+enum JourneyEventType {
+  DEPARTURE
+  ARRIVAL
+  DELAY
+  MANUAL_UPDATE
+}
+
+model JourneyEvent {
+  id          String           @id @default(cuid())
+  journeyId   String
+  journey     Journey          @relation(fields: [journeyId], references: [id])
+  type        JourneyEventType
+  templeId    String?
+  timestamp   DateTime         @default(now())
+  note        String?
+  createdById String?
+
+  @@map("journey_events")
+}
+
+model LocationPing {
+  id        String   @id @default(cuid())
+  deviceId  String
+  device    Device   @relation(fields: [deviceId], references: [id])
+  lat       Float
+  lng       Float
+  battery   Int?
+  timestamp DateTime @default(now())
+
+  @@index([deviceId, timestamp])
+  @@map("location_pings")
+}
+
+enum AlertType {
+  SOS
+  OFFLINE
+  ROUTE_DELAY
+  LOW_BATTERY
+}
+
+enum AlertSeverity {
+  CRITICAL
+  WARNING
+}
+
+model Alert {
+  id           String        @id @default(cuid())
+  type         AlertType
+  severity     AlertSeverity
+  monkId       String?
+  monk         MonkProfile?  @relation(fields: [monkId], references: [id])
+  deviceId     String?
+  device       Device?       @relation(fields: [deviceId], references: [id])
+  message      String
+  isResolved   Boolean       @default(false)
+  resolvedById String?
+  createdAt    DateTime      @default(now())
+
+  @@index([isResolved, severity])
+  @@map("alerts")
+}
+
+// =============================================================================
+// 11. VISITOR MANAGEMENT (§5.11)
+// =============================================================================
+
+enum VisitorEntryType {
+  MEMBER
+  NON_MEMBER
+  VEHICLE
+}
+
+model VisitorEntry {
+  id             String           @id @default(cuid())
+  publicId       String           @unique
+  organizationId String
+  organization   Organization     @relation(fields: [organizationId], references: [id])
+  entryType      VisitorEntryType
+  memberId       String?
+  member         Member?          @relation(fields: [memberId], references: [id])
+  visitorName    String?
+  visitorMobile  String?
+  purpose        String?
+  photoUrl       String?
+  vehicleNumber  String?
+  checkInAt      DateTime         @default(now())
+  checkOutAt     DateTime?
+  checkedInById  String?
+  checkedInBy    Staff?           @relation("HandledByGuard", fields: [checkedInById], references: [id])
+  idempotencyKey String           @unique
+  syncStatus     String           @default("SYNCED") // SYNCED | PENDING_SYNC
+
+  @@index([organizationId, checkInAt])
+  @@index([vehicleNumber])
+  @@map("visitor_entries")
+}
+
+// =============================================================================
+// 12. 99 MANAGEMENT — YATRA TOURS (§5.19)
+// =============================================================================
+
+enum TourStatus {
+  DRAFT
+  ACTIVE
+  ONGOING
+  COMPLETED
+  ARCHIVED
+}
+
+model Tour {
+  id            String       @id @default(cuid())
+  publicId      String       @unique
+  name          String
+  categoryId    String
+  category      TourCategory @relation(fields: [categoryId], references: [id])
+  startDate     DateTime
+  endDate       DateTime
+  location      String?
+  description   String?
+  coverUrl      String?
+  jatraTarget   Int
+  targetLocked  Boolean      @default(false)
+  status        TourStatus   @default(DRAFT)
+  primaryMonkId String
+  primaryMonk   MonkProfile  @relation("PrimaryMonk", fields: [primaryMonkId], references: [id])
+  monkGroupId   String?
+  monkGroup     MonkGroup?   @relation(fields: [monkGroupId], references: [id])
+  createdById   String?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  deletedAt     DateTime?
+
+  sponsors               TourSponsor[]
+  participants           TourParticipant[]
+  accommodationLocations TourAccommodationLocation[]
+  communications         TourCommunication[]
+  dailySchedules         TourDailySchedule[]
+
+  @@map("tours")
+}
+
+model TourSponsor {
+  id          String           @id @default(cuid())
+  tourId      String
+  tour        Tour             @relation(fields: [tourId], references: [id])
+  name        String
+  memberId    String?
+  categoryId  String?
+  category    SponsorCategory? @relation(fields: [categoryId], references: [id])
+  description String?
+  amount      Decimal?         @db.Decimal(12, 2)
+  contact     String?
+
+  @@map("tour_sponsors")
+}
+
+enum TourParticipantStatus {
+  ACTIVE
+  REMOVED
+}
+
+model TourParticipant {
+  id             String                @id @default(cuid())
+  tourId         String
+  tour           Tour                  @relation(fields: [tourId], references: [id])
+  memberId       String
+  member         Member                @relation("ParticipantMember", fields: [memberId], references: [id])
+  parentMemberId String?
+  parentMember   Member?               @relation("ParentMember", fields: [parentMemberId], references: [id])
+  status         TourParticipantStatus @default(ACTIVE)
+  createdAt      DateTime              @default(now())
+
+  medicalForm      TourMedicalForm?
+  roomAssignments  TourRoomAssignment[]
+  roomChangeLogs   TourRoomChangeLog[]
+  dailyJatraCounts TourDailyJatraCount[]
+  milestones       TourMilestone[]
+  attendance       TourAttendance[]
+
+  @@unique([tourId, memberId])
+  @@map("tour_participants")
+}
+
+model TourMedicalForm {
+  id                  String          @id @default(cuid())
+  participantId       String          @unique
+  participant         TourParticipant @relation(fields: [participantId], references: [id])
+  bloodGroup          String?
+  allergies           String?
+  conditions          String?
+  medications         String?
+  emergencyContact    Json?
+  doctorContact       Json?
+  specialInstructions String?
+  completedAt         DateTime        @default(now())
+
+  @@map("tour_medical_forms")
+}
+
+model TourAccommodationLocation {
+  id     String @id @default(cuid())
+  tourId String
+  tour   Tour   @relation(fields: [tourId], references: [id])
+  name   String
+
+  rooms TourRoom[]
+
+  @@map("tour_accommodation_locations")
+}
+
+model TourRoom {
+  id         String                    @id @default(cuid())
+  locationId String
+  location   TourAccommodationLocation @relation(fields: [locationId], references: [id])
+  name       String
+  type       String?
+  capacity   Int
+
+  assignments TourRoomAssignment[]
+
+  @@map("tour_rooms")
+}
+
+model TourRoomAssignment {
+  id            String          @id @default(cuid())
+  participantId String
+  participant   TourParticipant @relation(fields: [participantId], references: [id])
+  tourRoomId    String?
+  tourRoom      TourRoom?       @relation(fields: [tourRoomId], references: [id])
+  roomOrHallId  String?
+  roomOrHall    RoomOrHall?     @relation(fields: [roomOrHallId], references: [id])
+  checkInDate   DateTime?
+  checkOutDate  DateTime?
+
+  @@map("tour_room_assignments")
+}
+
+model TourRoomChangeLog {
+  id            String          @id @default(cuid())
+  participantId String
+  participant   TourParticipant @relation(fields: [participantId], references: [id])
+  fromRoomId    String?
+  toRoomId      String?
+  changedById   String?
+  changedAt     DateTime        @default(now())
+
+  @@map("tour_room_change_logs")
+}
+
+model TourDailyJatraCount {
+  id              String          @id @default(cuid())
+  participantId   String
+  participant     TourParticipant @relation(fields: [participantId], references: [id])
+  date            DateTime
+  count           Int
+  cumulativeCount Int
+  enteredById     String?
+  createdAt       DateTime        @default(now())
+
+  @@unique([participantId, date])
+  @@map("tour_daily_jatra_counts")
+}
+
+model TourMilestone {
+  id             String          @id @default(cuid())
+  participantId  String
+  participant    TourParticipant @relation(fields: [participantId], references: [id])
+  milestonePct   Int // 25/50/75/100
+  achievedAt     DateTime        @default(now())
+  certificateUrl String?
+
+  @@unique([participantId, milestonePct])
+  @@map("tour_milestones")
+}
+
+enum TourAttendanceStatus {
+  PRESENT
+  ABSENT
+  NOT_WELL
+}
+
+model TourAttendance {
+  id            String               @id @default(cuid())
+  participantId String
+  participant   TourParticipant      @relation(fields: [participantId], references: [id])
+  date          DateTime
+  status        TourAttendanceStatus
+
+  @@unique([participantId, date])
+  @@map("tour_attendance")
+}
+
+model TourCommunication {
+  id         String   @id @default(cuid())
+  tourId     String
+  tour       Tour     @relation(fields: [tourId], references: [id])
+  message    String
+  postedById String?
+  createdAt  DateTime @default(now())
+
+  @@map("tour_communications")
+}
+
+model TourDailySchedule {
+  id           String   @id @default(cuid())
+  tourId       String
+  tour         Tour     @relation(fields: [tourId], references: [id])
+  date         DateTime
+  scheduleText String
+
+  @@unique([tourId, date])
+  @@map("tour_daily_schedules")
+}
+
+// =============================================================================
+// 13. VOLUNTEERS (§5.20)
+// =============================================================================
+
+model VolunteerOpportunity {
+  id             String         @id @default(cuid())
+  organizationId String
+  organization   Organization   @relation(fields: [organizationId], references: [id])
+  role           String
+  details        String?
+  areaId         String?
+  area           VolunteerArea? @relation(fields: [areaId], references: [id])
+  createdById    String?
+  createdAt      DateTime       @default(now())
+  deletedAt      DateTime?
+
+  applications VolunteerApplication[]
+
+  @@map("volunteer_opportunities")
+}
+
+enum VolunteerApplicationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model VolunteerApplication {
+  id            String                     @id @default(cuid())
+  opportunityId String
+  opportunity   VolunteerOpportunity       @relation(fields: [opportunityId], references: [id])
+  memberId      String
+  member        Member                     @relation(fields: [memberId], references: [id])
+  status        VolunteerApplicationStatus @default(PENDING)
+  createdAt     DateTime                   @default(now())
+
+  @@unique([opportunityId, memberId])
+  @@map("volunteer_applications")
+}
+
+// =============================================================================
+// 14. FEED / ADS / OFFERS / NEWS / COMMUNITY PAGES / POLLS (§5.13–5.16)
+// =============================================================================
+
+enum FeedPostType {
+  AUTO
+  MANUAL
+}
+
+model FeedPost {
+  id               String         @id @default(cuid())
+  organizationId   String?
+  organization     Organization?  @relation(fields: [organizationId], references: [id])
+  communityPageId  String?
+  communityPage    CommunityPage? @relation(fields: [communityPageId], references: [id])
+  authorUserId     String?
+  type             FeedPostType   @default(MANUAL)
+  sourceModule     String?
+  sourceId         String?
+  title            String?
+  description      String?
+  coverUrl         String?
+  images           Json?
+  videoUrl         String?
+  pdfUrl           String?
+  externalLink     String?
+  categoryId       String?
+  category         FeedCategory?  @relation(fields: [categoryId], references: [id])
+  visibilityConfig Json?
+  startAt          DateTime?
+  endAt            DateTime?
+  isActive         Boolean        @default(true)
+  createdAt        DateTime       @default(now())
+  deletedAt        DateTime?
+
+  poll Poll?
+
+  @@index([organizationId, isActive])
+  @@map("feed_posts")
+}
+
+model Poll {
+  id            String    @id @default(cuid())
+  feedPostId    String    @unique
+  feedPost      FeedPost  @relation(fields: [feedPostId], references: [id])
+  question      String
+  options       Json // string[]
+  allowMultiple Boolean   @default(false)
+  endsAt        DateTime?
+  createdAt     DateTime  @default(now())
+
+  votes PollVote[]
+
+  @@map("polls")
+}
+
+model PollVote {
+  id          String   @id @default(cuid())
+  pollId      String
+  poll        Poll     @relation(fields: [pollId], references: [id])
+  memberId    String
+  member      Member   @relation(fields: [memberId], references: [id])
+  optionIndex Int
+  createdAt   DateTime @default(now())
+
+  @@unique([pollId, memberId])
+  @@map("poll_votes")
+}
+
+enum AdSlot {
+  TOP_BANNER
+  IN_FEED
+}
+
+model Ad {
+  id          String   @id @default(cuid())
+  bannerUrl   String
+  targetLink  String?
+  slot        AdSlot
+  targeting   Json? // { all: bool, cities: [], states: [], countries: [] }
+  startAt     DateTime
+  endAt       DateTime
+  isActive    Boolean  @default(true)
+  viewCount   Int      @default(0)
+  clickCount  Int      @default(0)
+  createdById String?
+  createdAt   DateTime @default(now())
+
+  @@map("ads")
+}
+
+model Offer {
+  id               String         @id @default(cuid())
+  publicId         String         @unique
+  companyName      String
+  companyLogoUrl   String?
+  bannerUrl        String?
+  title            String
+  description      String?
+  categoryId       String?
+  category         OfferCategory? @relation(fields: [categoryId], references: [id])
+  startAt          DateTime
+  endAt            DateTime
+  contact          Json?
+  links            Json? // { whatsapp, website, maps }
+  visibilityConfig Json?
+  viewCount        Int            @default(0)
+  clickCount       Int            @default(0)
+  shareCount       Int            @default(0)
+  createdById      String?
+  createdAt        DateTime       @default(now())
+  deletedAt        DateTime?
+
+  saves OfferSave[]
+
+  @@index([startAt, endAt])
+  @@map("offers")
+}
+
+model OfferSave {
+  id        String   @id @default(cuid())
+  offerId   String
+  offer     Offer    @relation(fields: [offerId], references: [id])
+  memberId  String
+  member    Member   @relation(fields: [memberId], references: [id])
+  createdAt DateTime @default(now())
+
+  @@unique([offerId, memberId])
+  @@map("offer_saves")
+}
+
+model News {
+  id             String        @id @default(cuid())
+  publicId       String        @unique
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+  title          String
+  description    String?
+  coverUrl       String?
+  bottomImageUrl String?
+  links          Json?
+  categoryId     String?
+  category       NewsCategory? @relation(fields: [categoryId], references: [id])
+  publishedAt    DateTime      @default(now())
+  archivedAt     DateTime?
+  isArchived     Boolean       @default(false)
+  createdById    String?
+  createdAt      DateTime      @default(now())
+  deletedAt      DateTime?
+
+  bookmarks NewsBookmark[]
+
+  @@index([isArchived, publishedAt])
+  @@map("news")
+}
+
+model NewsBookmark {
+  id        String   @id @default(cuid())
+  newsId    String
+  news      News     @relation(fields: [newsId], references: [id])
+  memberId  String
+  member    Member   @relation(fields: [memberId], references: [id])
+  createdAt DateTime @default(now())
+
+  @@unique([newsId, memberId])
+  @@map("news_bookmarks")
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  EXPIRING_SOON
+  EXPIRED
+  SUSPENDED
+}
+
+model CommunityPage {
+  id                    String                 @id @default(cuid())
+  publicId              String                 @unique
+  name                  String
+  logoUrl               String?
+  bannerUrl             String?
+  about                 String?
+  categoryId            String?
+  category              CommunityPageCategory? @relation(fields: [categoryId], references: [id])
+  contacts              Json?
+  socialLinks           Json?
+  visibilityConfig      Json?
+  joinApprovalMode      String                 @default("MANUAL") // AUTO | MANUAL
+  subscriptionPlan      String?
+  subscriptionStatus    SubscriptionStatus     @default(ACTIVE)
+  subscriptionExpiresAt DateTime?
+  createdById           String?
+  createdAt             DateTime               @default(now())
+  deletedAt             DateTime?
+
+  owners  CommunityPageOwner[]
+  members CommunityPageMember[]
+  posts   FeedPost[]
+
+  @@map("community_pages")
+}
+
+model CommunityPageOwner {
+  id     String        @id @default(cuid())
+  pageId String
+  page   CommunityPage @relation(fields: [pageId], references: [id])
+  userId String
+
+  @@unique([pageId, userId])
+  @@map("community_page_owners")
+}
+
+enum PageMemberStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model CommunityPageMember {
+  id        String           @id @default(cuid())
+  pageId    String
+  page      CommunityPage    @relation(fields: [pageId], references: [id])
+  memberId  String
+  member    Member           @relation(fields: [memberId], references: [id])
+  status    PageMemberStatus @default(PENDING)
+  createdAt DateTime         @default(now())
+
+  @@unique([pageId, memberId])
+  @@map("community_page_members")
+}
+
+// =============================================================================
+// 15. COMMUNICATION / ANNOUNCEMENTS / GALLERY (§5.21–5.22)
+// =============================================================================
+
+model OrgCommunication {
+  id        String        @id @default(cuid())
+  fromOrgId String
+  fromOrg   Organization  @relation("CommFromOrg", fields: [fromOrgId], references: [id])
+  toOrgId   String?
+  toOrg     Organization? @relation("CommToOrg", fields: [toOrgId], references: [id])
+  message   String
+  sentById  String?
+  createdAt DateTime      @default(now())
+
+  @@map("org_communications")
+}
+
+model Announcement {
+  id               String        @id @default(cuid())
+  organizationId   String?
+  organization     Organization? @relation(fields: [organizationId], references: [id])
+  title            String
+  body             String
+  visibilityConfig Json?
+  createdById      String?
+  createdAt        DateTime      @default(now())
+  deletedAt        DateTime?
+
+  @@map("announcements")
+}
+
+model GalleryAlbum {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  eventId        String?
+  name           String
+  createdAt      DateTime     @default(now())
+  deletedAt      DateTime?
+
+  images GalleryImage[]
+
+  @@map("gallery_albums")
+}
+
+model GalleryImage {
+  id       String       @id @default(cuid())
+  albumId  String
+  album    GalleryAlbum @relation(fields: [albumId], references: [id])
+  imageUrl String
+  order    Int          @default(0)
+
+  @@map("gallery_images")
+}
+
+// =============================================================================
+// 16. SPIRITUAL COUNTING — DIGITAL MALA (§5.18)
+// =============================================================================
+
+model MemberCounter {
+  id            String          @id @default(cuid())
+  memberId      String
+  member        Member          @relation(fields: [memberId], references: [id])
+  counterTypeId String
+  counterType   CounterType     @relation(fields: [counterTypeId], references: [id])
+  subTypeId     String?
+  subType       CounterSubType? @relation(fields: [subTypeId], references: [id])
+  count         BigInt          @default(0)
+  updatedAt     DateTime        @updatedAt
+
+  resetLogs CounterResetLog[]
+
+  @@unique([memberId, counterTypeId, subTypeId])
+  @@map("member_counters")
+}
+
+model CounterResetLog {
+  id              String        @id @default(cuid())
+  memberCounterId String
+  memberCounter   MemberCounter @relation(fields: [memberCounterId], references: [id])
+  previousCount   BigInt
+  resetAt         DateTime      @default(now())
+
+  @@map("counter_reset_logs")
+}
+
+// =============================================================================
+// 17. NOTIFICATION ENGINE (§4.3)
+// =============================================================================
+
+model NotificationTemplate {
+  id              String   @id @default(cuid())
+  key             String
+  channel         String // PUSH | WHATSAPP | SMS | EMAIL | IN_APP
+  locale          String   @default("en")
+  subjectTemplate String?
+  bodyTemplate    String
+  createdAt       DateTime @default(now())
+
+  @@unique([key, channel, locale])
+  @@map("notification_templates")
+}
+
+model NotificationLog {
+  id              String    @id @default(cuid())
+  recipientUserId String?
+  recipient       User?     @relation(fields: [recipientUserId], references: [id])
+  channel         String
+  templateKey     String
+  payload         Json?
+  status          String    @default("QUEUED") // QUEUED|SENT|FAILED|OPENED
+  sentAt          DateTime?
+  openedAt        DateTime?
+  errorMessage    String?
+  createdAt       DateTime  @default(now())
+
+  @@index([recipientUserId, createdAt])
+  @@map("notification_logs")
+}
+
+// =============================================================================
+// 18. SETTINGS / MISC PLATFORM SERVICES (§5.23)
+// =============================================================================
+
+model AppSetting {
+  key         String   @id
+  value       Json
+  updatedById String?
+  updatedAt   DateTime @updatedAt
+
+  @@map("app_settings")
+}
+
+model AlertThreshold {
+  id    String @id @default(cuid())
+  type  String @unique // OFFLINE_MINUTES | LOW_BATTERY_PCT | ROUTE_DELAY_MINUTES
+  value Int
+
+  @@map("alert_thresholds")
+}
+
+model AppRatingPrompt {
+  id           String    @id @default(cuid())
+  userId       String    @unique
+  hasRated     Boolean   @default(false)
+  lastPromptAt DateTime?
+
+  @@map("app_rating_prompts")
+}
+
+model HelpContent {
+  id       String @id @default(cuid())
+  section  String @unique
+  title    String
+  bodyHtml String
+
+  @@map("help_content")
+}
