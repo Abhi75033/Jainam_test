@@ -327,10 +327,11 @@ export async function generateTourCertificate(participantId: string) {
   const stored = await storage.save(pdf, `certificate-${participant.member.publicId}-${participant.tour.publicId}.pdf`, 'application/pdf', 'certificates');
   await prisma.tourMilestone.update({ where: { id: milestone.id }, data: { certificateUrl: stored.url } });
 
-  await prisma.memberActivityAggregate.update({
+  await prisma.memberActivityAggregate.upsert({
     where: { memberId: participant.memberId },
-    data: { certificatesCount: { increment: 1 }, toursCount: { increment: 1 } },
-  }).catch(() => undefined);
+    update: { certificatesCount: { increment: 1 }, toursCount: { increment: 1 } },
+    create: { memberId: participant.memberId, certificatesCount: 1, toursCount: 1 },
+  });
 
   await notifyParticipantAndParent(
     { member: { userId: participant.member.userId }, parentMember: null, tour: { name: participant.tour.name } } as any,
