@@ -85,6 +85,35 @@ export const orgDonations = asyncHandler(async (req: Request, res: Response) => 
   return ok(res, rows, { total });
 });
 
+export const orgDonationsExport = asyncHandler(async (req: Request, res: Response) => {
+  const { status } = req.query as any;
+  const { rows } = await donationsService.listOrgDonations(req.params.organizationId as string, { status, page: 1, pageSize: 5000 });
+  const { sendListExport, parseExportFormat } = await import('@/utils/listExport');
+  return sendListExport(
+    res,
+    parseExportFormat(req.query.format),
+    'Organization Donations',
+    rows.map((r) => ({
+      donationId: r.publicId,
+      donor: `${r.member.fullName} (${r.member.publicId})`,
+      amount: r.totalAmount.toString(),
+      currency: r.currency,
+      status: r.status,
+      categories: r.categorySplits.map((s) => `${s.donationCategory.name}: ${s.amount}`).join('; '),
+      date: r.createdAt.toISOString().slice(0, 10),
+    })),
+    [
+      { key: 'donationId', header: 'Donation ID' },
+      { key: 'donor', header: 'Donor' },
+      { key: 'amount', header: 'Amount' },
+      { key: 'currency', header: 'Currency' },
+      { key: 'status', header: 'Status' },
+      { key: 'categories', header: 'Category Split' },
+      { key: 'date', header: 'Date' },
+    ],
+  );
+});
+
 export const myDonations = asyncHandler(async (req: Request, res: Response) => {
   const member = await requireMember(req.actor!.userId);
   const { page = 1, pageSize = 20 } = req.query as any;

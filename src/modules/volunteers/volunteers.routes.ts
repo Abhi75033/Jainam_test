@@ -65,6 +65,11 @@ volunteerRoutes.patch('/applications/:applicationId', requireAuth, requirePermis
       data: { organizationId: application.opportunity.organizationId, memberId: application.memberId, area: application.opportunity.role },
     });
     await prisma.member.update({ where: { id: application.memberId }, data: { isVolunteer: true } });
+    await prisma.memberBadge.upsert({
+      where: { memberId_badge: { memberId: application.memberId, badge: 'VOLUNTEER' } },
+      update: {},
+      create: { memberId: application.memberId, badge: 'VOLUNTEER' },
+    });
   }
 
   return ok(res, application);

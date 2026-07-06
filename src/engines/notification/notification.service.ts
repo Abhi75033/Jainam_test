@@ -47,6 +47,30 @@ async function resolveChannels(userId: string, category: 'SERVICE' | 'MARKETING'
   return enabled.length > 0 ? enabled : ['IN_APP', 'PUSH'];
 }
 
+const LOCALE_BY_LANGUAGE: Record<string, string> = { English: 'en', Hindi: 'hi', Gujarati: 'gu' };
+
+/**
+ * Member preferred language drives templates (§7): if a NotificationTemplate
+ * exists for (key, channel, member locale), it overrides the caller's body.
+ * Falls back to the 'en' template, then the literal body passed in.
+ */
+async function resolveBody(input: NotifyInput, channel: NotificationChannel): Promise<{ subject?: string; body: string }> {
+  const user = await prisma.user.findUnique({ where: { id: input.userId }, select: { preferredLanguage: true } });
+  const locale = LOCALE_BY_LANGUAGE[user?.preferredLanguage ?? 'English'] ?? 'en';
+
+  const template =
+    (await prisma.notificationTemplate.findUnique({ where: { key_channel_locale: { key: input.templateKey, channel, locale } } })) ??
+    (locale !== 'en'
+      ? await prisma.notificationTemplate.findUnique({ where: { key_channel_locale: { key: input.templateKey, channel, locale: 'en' } } })
+      : null);
+
+  if (!template) return { subject: input.subject, body: input.body };
+
+  const interpolate = (text: string) =>
+    text.replace(/\{\{(\w+)\}\}/g, (_, key) => String((input.data as Record<string, unknown> | undefined)?.[key] ?? ''));
+  return { subject: template.subjectTemplate ? interpolate(template.subjectTemplate) : input.subject, body: interpolate(template.bodyTemplate) };
+}
+
 /** Executes the actual send with WhatsApp -> SMS failover, logging every attempt to NotificationLog. */
 export async function dispatchNotification(input: NotifyInput): Promise<void> {
   const channels = input.channels ?? (await resolveChannels(input.userId, input.category));
@@ -66,7 +90,8 @@ export async function dispatchNotification(input: NotifyInput): Promise<void> {
     });
 
     const adapter = ADAPTERS[channel];
-    const result = await adapter.send({ userId: input.userId, to, subject: input.subject, body: input.body, data: input.data });
+    const { subject, body } = await resolveBody(input, channel);
+    const result = await adapter.send({ userId: input.userId, to, subject, body, data: input.data });
 
     if (result.success) {
       await prisma.notificationLog.update({
@@ -93,7 +118,7 @@ export async function dispatchNotification(input: NotifyInput): Promise<void> {
           status: 'QUEUED',
         },
       });
-      const smsResult = await smsAdapter.send({ userId: input.userId, to: input.to.SMS, body: input.body, data: input.data });
+      const smsResult = await smsAdapter.send({ userId: input.userId, to: input.to.SMS, body, data: input.data });
       await prisma.notificationLog.update({
         where: { id: smsLog.id },
         data: smsResult.success

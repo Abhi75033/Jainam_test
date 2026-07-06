@@ -98,6 +98,41 @@ the project's top-level `ioredis`. Queues/workers therefore receive **plain
 connection options** (host/port/auth parsed from `REDIS_URL`) rather than a
 shared client instance — also BullMQ's own recommendation.
 
+## D-013a — Follow/save/bookmark rows are hard-deleted on toggle-off
+
+The global "no hard delete" rule applies to *records* (members, bookings,
+events, messages, reviews, logs...). Follow/save/bookmark join rows are
+user-reversible toggles, not records with history value; unfollow/unsave
+removes the row directly. Booking internal-reservation removal is likewise a
+true delete because §5.7 explicitly makes internal reservations
+"editable/removable by admin". Org-communication deletion exists only for
+Super Admin, exactly as §5.21 specifies.
+
+## D-013b — Audit coverage layering
+
+§4.4 demands middleware-level audit of every mutating action. Implemented as
+two layers: (1) a global `auditTrail` middleware that records every successful
+authenticated POST/PATCH/PUT/DELETE (module derived from path, sensitive body
+fields redacted), and (2) explicit controller-level audits carrying full
+before/after diffs for critical actions (donation verification, booking
+approval, route changes, permission changes, profile updates, deletions).
+
+## D-013c — OpenAPI documentation strategy
+
+Rather than hand-annotating ~280 routes with JSDoc blocks, the OpenAPI `paths`
+object is generated programmatically from the live Express router at app
+startup (`src/config/openapiPaths.ts`) — every endpoint appears in Swagger,
+tagged by module, with path parameters and the standard envelope schema. Any
+route added later is documented automatically.
+
+## D-013d — In-house Redis rate-limit store
+
+The published `rate-limit-redis` pins express-rate-limit >= 8.5; this project
+uses 7.x. A ~40-line Store implementation over the existing ioredis client
+(`src/middlewares/redisRateLimitStore.ts`) provides the Redis-backed fixed
+window the spec requires without a version-conflicted dependency. Tests fall
+back to the in-memory store.
+
 ## D-013 — Geofence notification dedupe
 
 "Push when a member is within 5 km radius of a temple" would re-fire on every

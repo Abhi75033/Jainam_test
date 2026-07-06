@@ -60,3 +60,36 @@ export const dashboardStats = asyncHandler(async (req: Request, res: Response) =
   const stats = await staffService.getStaffDashboardStats(req.params.organizationId as string);
   return ok(res, stats);
 });
+
+/** Staff QR identity — downloadable/printable (§5.12). */
+export const myStaffQr = asyncHandler(async (req: Request, res: Response) => {
+  const staff = await prisma.staff.findUnique({
+    where: { userId: req.actor!.userId },
+    include: { member: { select: { fullName: true } }, organization: { select: { name: true, publicId: true } } },
+  });
+  if (!staff || !staff.qrToken) throw ApiError.notFound('Staff profile not found');
+  const { renderQrPngDataUrl } = await import('@/engines/qr/qr.service');
+  const qrDataUrl = await renderQrPngDataUrl(staff.qrToken);
+  return ok(res, {
+    staffPublicId: staff.publicId,
+    name: staff.member.fullName,
+    organization: staff.organization,
+    qrToken: staff.qrToken,
+    qrDataUrl,
+  });
+});
+
+/** Shift + overtime management (§5.12). */
+export const createShift = asyncHandler(async (req: Request, res: Response) => {
+  const shift = await prisma.staffShift.create({ data: { staffId: req.params.staffId as string, ...req.body } });
+  return created(res, shift);
+});
+
+export const listShifts = asyncHandler(async (req: Request, res: Response) => {
+  const shifts = await prisma.staffShift.findMany({
+    where: { staffId: req.params.staffId as string },
+    orderBy: { date: 'desc' },
+    take: 100,
+  });
+  return ok(res, shifts);
+});

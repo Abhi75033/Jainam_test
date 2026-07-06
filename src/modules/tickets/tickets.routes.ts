@@ -27,3 +27,6 @@ ticketRoutes.post('/:ticketId/refund', requireAuth, requireRole('SUPER_ADMIN'), 
 
 // Status history — member (own) + Super Admin (§5.9)
 ticketRoutes.get('/:ticketPublicId/history', requireAuth, ticketsController.ticketHistory);
+
+// Downloadable ticket PDF with QR (§5.9)
+ticketRoutes.get('/:ticketPublicId/download', requireAuth, ticketsController.downloadTicket);

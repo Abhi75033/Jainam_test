@@ -67,6 +67,18 @@ export async function transitionTour(tourId: string, status: 'DRAFT' | 'ACTIVE' 
     const key = status === 'ACTIVE' ? 'TOUR_CREATED' : status === 'ONGOING' ? 'TOUR_STARTED' : 'TOUR_COMPLETED';
     await notifyTourAudience(tourId, key, `Tour "${tour.name}" is now ${status.toLowerCase()}.`);
   }
+
+  // Auto feed-card when a tour goes live (§5.13)
+  if (status === 'ACTIVE') {
+    const { createAutoFeedCard } = await import('@/modules/feed/feed.service');
+    await createAutoFeedCard({
+      sourceModule: 'TOURS',
+      sourceId: tour.id,
+      title: `Yatra tour announced: ${tour.name}`,
+      description: tour.description ?? undefined,
+      coverUrl: tour.coverUrl ?? undefined,
+    });
+  }
   return updated;
 }
 

@@ -17,6 +17,10 @@ const transitionSchema = z.object({
   body: z.object({ status: z.enum(['DRAFT', 'PUBLISHED', 'RSVP_SALES_OPEN', 'LIVE', 'COMPLETED', 'GALLERY_UPLOADED', 'ARCHIVED']) }),
 });
 
+const cancelSchema = z.object({
+  body: z.object({ reason: z.string().min(1), refundPolicyNote: z.string().optional() }),
+});
+
 export const eventRoutes = Router();
 
 // Creation: free events by org admins with EVENTS:CREATE; paid events blocked
@@ -26,6 +30,9 @@ eventRoutes.get('/member', requireAuth, validate(memberEventsQuerySchema), event
 eventRoutes.get('/:eventId', requireAuth, eventsController.getEvent);
 eventRoutes.patch('/:eventId', requireAuth, requirePermission('EVENTS', 'EDIT'), validate(updateEventSchema), eventsController.updateEvent);
 eventRoutes.post('/:eventId/transition', requireAuth, requirePermission('EVENTS', 'EDIT'), validate(transitionSchema), eventsController.transitionEvent);
+eventRoutes.post('/:eventId/cancel', requireAuth, requirePermission('EVENTS', 'EDIT'), validate(cancelSchema), eventsController.cancelEvent);
+eventRoutes.get('/:eventId/rsvps', requireAuth, requirePermission('EVENTS', 'VIEW'), eventsController.listRsvps);
+eventRoutes.get('/:eventId/rsvps/export', requireAuth, requirePermission('EVENTS', 'VIEW'), eventsController.exportRsvps);
 
 // RSVP
 eventRoutes.post('/:eventId/rsvp', requireAuth, validate(rsvpSchema), eventsController.rsvp);

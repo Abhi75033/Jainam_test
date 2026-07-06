@@ -52,9 +52,17 @@ npm run worker     # BullMQ worker process (separate terminal)
 ### Tests
 
 ```bash
-npm test                     # unit tests (no DB required)
-RUN_INTEGRATION=1 npm test   # + integration tests (needs live Postgres)
+npm run test:unit            # engine/unit tests (no DB required)
+RUN_INTEGRATION=1 npm test   # + full end-to-end flow tests (needs live Postgres + Redis,
+                             #   i.e. docker-compose up postgres redis)
 ```
+
+End-to-end suites (Supertest against the real app + middleware chain):
+booking→payment window→verify→receipt, donation split validation→receipt,
+paid event→seat lock→ticket→QR scan→duplicate rejection, visitor offline-sync
+idempotency + vehicle duplicate prevention, tour jatra counting→milestones→
+certificate, member registration→family auto-account, ID-sequence concurrency,
+and cross-tenant isolation.
 
 ## Architecture
 
@@ -94,6 +102,15 @@ tests/            unit + integration (integration gated behind RUN_INTEGRATION=1
 - **Sensitive fields** (Aadhaar, PAN, bank details, govt doc numbers) are
   AES-256-GCM encrypted at rest; Aadhaar duplicate-prevention uses an HMAC
   lookup hash.
+- **Blanket audit net:** a global middleware records every successful
+  authenticated mutation (redacting sensitive body fields) on top of the
+  explicit before/after audits on critical actions.
+- **Recurring jobs** (tithi daily, device sweeps, page-subscription
+  recompute, feed activation, staff doc-expiry/not-checked-out sweeps) are
+  registered as BullMQ repeatable crons on worker startup.
+- **Rate limiting is Redis-backed** so limits hold across scaled instances.
+- **Swagger** documents every registered route automatically — the OpenAPI
+  paths are generated from the live router at startup.
 
 ### Key flows
 

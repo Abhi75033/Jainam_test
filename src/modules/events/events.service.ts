@@ -70,6 +70,48 @@ export async function transitionEvent(eventId: string, to: EventStatus, actor: {
   return updated;
 }
 
+/**
+ * Event cancellation (§4.3): notifies RSVP + ticket holders with the reason and
+ * refund policy. Refunds themselves remain manual (Super Admin marks refunded).
+ */
+export async function cancelEvent(eventId: string, reason: string, refundPolicyNote: string | undefined, actor: { userId: string; isSuperAdmin: boolean }) {
+  const event = await prisma.event.findUnique({ where: { id: eventId } });
+  if (!event || event.deletedAt) throw ApiError.notFound('Event not found');
+  if (event.cancelledAt) throw ApiError.conflict('Event is already cancelled');
+  if (['COMPLETED', 'GALLERY_UPLOADED', 'ARCHIVED'].includes(event.status) && !actor.isSuperAdmin) {
+    throw ApiError.forbidden('Completed events can only be modified by Super Admin');
+  }
+
+  const updated = await prisma.event.update({
+    where: { id: eventId },
+    data: { status: 'ARCHIVED', cancelledAt: new Date(), cancellationReason: reason, refundPolicyNote, updatedById: actor.userId },
+  });
+
+  // Remove pending lifecycle/reminder jobs
+  const lifecycleJob = await getQueue(QUEUE_NAMES.EVENT_LIFECYCLE).getJob(`event-complete-${eventId}`);
+  if (lifecycleJob) await lifecycleJob.remove().catch(() => undefined);
+
+  const [rsvps, tickets] = await Promise.all([
+    prisma.eventRsvp.findMany({ where: { eventId, status: { in: ['CONFIRMED', 'WAITING_LIST'] } }, include: { member: { select: { userId: true } } } }),
+    prisma.ticket.findMany({ where: { eventId, status: { in: ['TICKET_GENERATED', 'PAYMENT_SUCCESSFUL', 'PENDING_PAYMENT'] } }, include: { buyerMember: { select: { userId: true } } } }),
+  ]);
+  const userIds = new Set([...rsvps.map((r) => r.member.userId), ...tickets.map((t) => t.buyerMember.userId)]);
+  const refundLine = refundPolicyNote ?? (event.isPaid ? 'Ticket refunds will be processed manually — you will be contacted by the JiNANAM team.' : '');
+  await Promise.all(
+    Array.from(userIds).map((userId) =>
+      enqueueNotification({
+        userId,
+        templateKey: 'EVENT_CANCELLED',
+        category: 'SERVICE',
+        to: { PUSH: userId, IN_APP: userId },
+        body: `${event.title} has been cancelled. Reason: ${reason}. ${refundLine}`.trim(),
+      }),
+    ),
+  );
+
+  return updated;
+}
+
 async function schedulePublishSideEffects(eventId: string) {
   const event = await prisma.event.findUniqueOrThrow({ where: { id: eventId } });
   const now = Date.now();
@@ -98,6 +140,18 @@ async function schedulePublishSideEffects(eventId: string) {
       await getQueue(QUEUE_NAMES.EVENT_REMINDERS).add('reminder', { eventId, reminderKey: r.key }, { delay: r.at - now, jobId: `event-reminder-${eventId}-${r.key}` });
     }
   }
+
+  // Automatic feed-card generation (§5.13)
+  const { createAutoFeedCard } = await import('@/modules/feed/feed.service');
+  await createAutoFeedCard({
+    sourceModule: 'EVENTS',
+    sourceId: event.id,
+    organizationId: event.organizationId,
+    title: event.title,
+    description: event.description ?? undefined,
+    coverUrl: event.bannerUrl ?? undefined,
+    visibilityConfig: (event.visibilityConfig as Record<string, unknown>) ?? undefined,
+  });
 
   // Publish notification to eligible members (visibility engine fan-out)
   const config = (event.visibilityConfig ?? { isPublic: true }) as any;
@@ -296,6 +350,17 @@ export async function addGalleryImages(eventId: string, imageUrls: string[]) {
 
   await prisma.eventGalleryImage.createMany({ data: imageUrls.map((imageUrl, i) => ({ eventId, imageUrl, order: count + i })) });
   await prisma.event.update({ where: { id: eventId }, data: { status: 'GALLERY_UPLOADED' } });
+
+  // Auto feed-card for the gallery update (§5.13)
+  const { createAutoFeedCard } = await import('@/modules/feed/feed.service');
+  await createAutoFeedCard({
+    sourceModule: 'GALLERY',
+    sourceId: eventId,
+    organizationId: event.organizationId,
+    title: `Photos from ${event.title}`,
+    coverUrl: imageUrls[0],
+    visibilityConfig: (event.visibilityConfig as Record<string, unknown>) ?? undefined,
+  });
 
   // Gallery-upload notification to ATTENDEES ONLY (§5.9)
   const attendees = await prisma.ticket.findMany({ where: { eventId, status: 'CHECKED_IN' }, include: { buyerMember: { select: { userId: true } } } });

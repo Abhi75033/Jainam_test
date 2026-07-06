@@ -106,3 +106,30 @@ export const orgBookings = asyncHandler(async (req: Request, res: Response) => {
   const { total, rows } = await bookingsService.listOrgBookings(req.params.organizationId as string, { status, page: Number(page), pageSize: Number(pageSize) });
   return ok(res, rows, { total });
 });
+
+export const orgBookingsExport = asyncHandler(async (req: Request, res: Response) => {
+  const { status } = req.query as any;
+  const { rows } = await bookingsService.listOrgBookings(req.params.organizationId as string, { status, page: 1, pageSize: 5000 });
+  const { sendListExport, parseExportFormat } = await import('@/utils/listExport');
+  return sendListExport(
+    res,
+    parseExportFormat(req.query.format),
+    'Organization Bookings',
+    rows.map((r) => ({
+      bookingId: r.publicId,
+      item: r.bookingItem.name,
+      member: `${r.member.fullName} (${r.member.publicId})`,
+      dateFrom: r.dateFrom.toISOString().slice(0, 10),
+      status: r.status,
+      amount: r.amount.toString(),
+    })),
+    [
+      { key: 'bookingId', header: 'Booking ID' },
+      { key: 'item', header: 'Item' },
+      { key: 'member', header: 'Member' },
+      { key: 'dateFrom', header: 'Date' },
+      { key: 'status', header: 'Status' },
+      { key: 'amount', header: 'Amount' },
+    ],
+  );
+});

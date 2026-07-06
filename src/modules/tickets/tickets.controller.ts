@@ -57,3 +57,26 @@ export const attendance = asyncHandler(async (req: Request, res: Response) => {
   const stats = await ticketsService.eventAttendance(req.params.eventId as string);
   return ok(res, stats);
 });
+
+/** Downloadable ticket PDF with embedded QR (§5.9 "download ticket"). */
+export const downloadTicket = asyncHandler(async (req: Request, res: Response) => {
+  const ticket = await prisma.ticket.findUnique({
+    where: { publicId: req.params.ticketPublicId as string },
+    include: {
+      event: { select: { title: true, venue: true, startAt: true } },
+      ticketCategory: { select: { name: true } },
+      seat: { select: { label: true } },
+      buyerMember: { select: { userId: true, fullName: true, publicId: true } },
+      attendeeMember: { select: { userId: true, fullName: true, publicId: true } },
+    },
+  });
+  if (!ticket) throw ApiError.notFound('Ticket not found');
+
+  const isHolder = ticket.buyerMember.userId === req.actor!.userId || ticket.attendeeMember?.userId === req.actor!.userId;
+  if (!isHolder && !req.actor!.isSuperAdmin) throw ApiError.forbidden('Only the ticket holder can download this ticket');
+
+  const pdf = await ticketsService.renderTicketPdf(ticket);
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="${ticket.publicId}.pdf"`);
+  return res.send(pdf);
+});

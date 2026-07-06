@@ -8,8 +8,16 @@ import {
   updateMemberProfileSchema,
   bulkImportSchema,
 } from './members.dto';
+import multer from 'multer';
 import * as membersController from './members.controller';
 import { locationPing } from './memberLocation.controller';
+import { bulkImportFromExcel } from './bulkImportExcel.controller';
+import { myMemberQr } from './memberQr.controller';
+
+const excelUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+});
 
 const locationPingSchema = z.object({
   body: z.object({ lat: z.number().min(-90).max(90), lng: z.number().min(-180).max(180) }),
@@ -32,3 +40,13 @@ memberRoutes.post(
   validate(bulkImportSchema),
   membersController.bulkImportMembers,
 );
+// Excel (.xlsx) upload variant of bulk import (§5.2)
+memberRoutes.post(
+  '/bulk-import/excel',
+  requireAuth,
+  requirePermission('MEMBERS', 'CREATE'),
+  excelUpload.single('file'),
+  bulkImportFromExcel,
+);
+// Member ID QR — digital membership card (§4.5)
+memberRoutes.get('/me/qr', requireAuth, myMemberQr);

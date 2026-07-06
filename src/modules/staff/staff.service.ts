@@ -132,6 +132,19 @@ export async function updateStaffModulePermissions(staffId: string, permissions:
     data: permissions.map((p) => ({ staffId, module: p.module, actions: p.actions as unknown as Prisma.InputJsonValue })),
   });
   await prisma.staffActivityLog.create({ data: { staffId, module: 'STAFF', action: 'PERMISSION_CHANGE', device: 'admin-portal' } });
+
+  // §4.3: notify the staff member their permissions changed
+  const staff = await prisma.staff.findUnique({ where: { id: staffId }, select: { userId: true } });
+  if (staff) {
+    await enqueueNotification({
+      userId: staff.userId,
+      templateKey: 'PERMISSIONS_CHANGED',
+      category: 'SERVICE',
+      to: { PUSH: staff.userId, IN_APP: staff.userId },
+      body: 'Your module permissions were updated by your administrator. Your app menu will refresh on next launch.',
+    });
+  }
+
   return prisma.staffModulePermission.findMany({ where: { staffId } });
 }
 

@@ -226,6 +226,47 @@ export async function getTicketStatusHistory(ticketPublicId: string) {
   return ticket;
 }
 
+/** Renders a downloadable ticket PDF with the embedded QR (§5.9). */
+export async function renderTicketPdf(ticket: {
+  publicId: string;
+  qrToken: string;
+  amount: unknown;
+  currency: string;
+  event: { title: string; venue: string | null; startAt: Date };
+  ticketCategory: { name: string };
+  seat: { label: string } | null;
+  buyerMember: { fullName: string; publicId: string };
+  attendeeMember: { fullName: string; publicId: string } | null;
+  attendeeName?: string | null;
+}): Promise<Buffer> {
+  const { renderQrBuffer } = await import('@/engines/qr/qr.service');
+  const PDFDocument = (await import('pdfkit')).default;
+  const qrPng = await renderQrBuffer(ticket.qrToken);
+
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ size: 'A5', margin: 40 });
+    const chunks: Buffer[] = [];
+    doc.on('data', (c: Buffer) => chunks.push(c));
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+
+    doc.fontSize(16).font('Helvetica-Bold').text('JiNANAM — Event Ticket', { align: 'center' });
+    doc.moveDown();
+    doc.fontSize(13).text(ticket.event.title, { align: 'center' });
+    doc.fontSize(10).font('Helvetica').text(`${ticket.event.startAt.toLocaleString()} ${ticket.event.venue ? `· ${ticket.event.venue}` : ''}`, { align: 'center' });
+    doc.moveDown();
+    doc.text(`Ticket: ${ticket.publicId}`);
+    doc.text(`Category: ${ticket.ticketCategory.name}${ticket.seat ? ` · Seat ${ticket.seat.label}` : ''}`);
+    doc.text(`Attendee: ${ticket.attendeeMember?.fullName ?? ticket.attendeeName ?? ticket.buyerMember.fullName} (${ticket.attendeeMember?.publicId ?? ticket.buyerMember.publicId})`);
+    doc.text(`Amount: ${ticket.currency} ${String(ticket.amount)}`);
+    doc.moveDown();
+    doc.image(qrPng, doc.page.width / 2 - 60, doc.y, { width: 120 });
+    doc.moveDown(8);
+    doc.fontSize(8).font('Helvetica-Oblique').text('Present this QR at the gate. Valid from 24 hours before the event until it ends.', { align: 'center' });
+    doc.end();
+  });
+}
+
 /** Realtime attendance counts for event dashboards. */
 export async function eventAttendance(eventId: string) {
   const [total, checkedIn] = await Promise.all([

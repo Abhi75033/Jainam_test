@@ -11,6 +11,9 @@ import { createTourMilestoneWorker } from '@/modules/tours99/tourMilestone.proce
 import { createDeviceAlertWorker } from '@/modules/devices/deviceAlerts.processor';
 import { createTithiDailyWorker } from '@/modules/calendar/tithiDaily.processor';
 import { createSeatLockReleaseWorker } from '@/modules/seating/seatLockRelease.processor';
+import { createStaffSweepWorker } from '@/modules/staff/staffSweep.processor';
+import { createFeedActivationWorker } from '@/modules/feed/feedActivation.processor';
+import { registerRepeatableJobs } from './scheduler';
 
 /**
  * Standalone BullMQ worker process (`npm run worker`). Kept separate from the
@@ -30,7 +33,11 @@ async function main() {
     createDeviceAlertWorker(),
     createTithiDailyWorker(),
     createSeatLockReleaseWorker(),
+    createStaffSweepWorker(),
+    createFeedActivationWorker(),
   ];
+
+  await registerRepeatableJobs();
 
   logger.info(`JiNANAM worker process started with ${workers.length} queue workers`);
 

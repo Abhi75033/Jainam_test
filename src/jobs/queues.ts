@@ -26,6 +26,8 @@ export const QUEUE_NAMES = {
   DEVICE_ALERTS: 'device-alerts',
   TITHI_DAILY: 'tithi-daily',
   SEAT_LOCK_RELEASE: 'seat-lock-release',
+  STAFF_SWEEPS: 'staff-sweeps',
+  FEED_ACTIVATION: 'feed-activation',
 } as const;
 
 export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES];

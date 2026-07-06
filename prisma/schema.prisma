@@ -1608,6 +1608,9 @@ model Event {
   waitingListEnabled Boolean        @default(true)
   isPaid             Boolean        @default(false)
   status             EventStatus    @default(DRAFT)
+  cancelledAt        DateTime?
+  cancellationReason String?
+  refundPolicyNote   String?
   createdById        String?
   updatedById        String?
   createdAt          DateTime       @default(now())

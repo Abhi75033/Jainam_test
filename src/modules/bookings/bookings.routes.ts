@@ -37,5 +37,6 @@ bookingRoutes.post('/:bookingId/payment-proof', requireAuth, validate(submitPaym
 bookingRoutes.post('/:bookingId/decision', requireAuth, requirePermission('BOOKINGS', 'APPROVE'), validate(bookingDecisionSchema), bookingsController.decideBooking);
 bookingRoutes.post('/:bookingId/payment-verification', requireAuth, requirePermission('BOOKINGS', 'APPROVE'), validate(paymentVerificationSchema), bookingsController.verifyPayment);
 
-// Org occupancy / admin listing
+// Org occupancy / admin listing (+ export variant per §7)
 bookingRoutes.get('/org/:organizationId', requireAuth, requirePermission('BOOKINGS', 'VIEW'), scopeToOrganization, bookingsController.orgBookings);
+bookingRoutes.get('/org/:organizationId/export', requireAuth, requirePermission('BOOKINGS', 'VIEW'), scopeToOrganization, bookingsController.orgBookingsExport);

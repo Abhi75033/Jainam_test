@@ -32,6 +32,18 @@ export async function createOffer(input: Record<string, unknown> & { createdById
   });
 
   await scheduleOfferNotifications(offer.id, offer.startAt, offer.endAt);
+
+  // Auto feed-card (§5.13)
+  const { createAutoFeedCard } = await import('@/modules/feed/feed.service');
+  await createAutoFeedCard({
+    sourceModule: 'OFFERS',
+    sourceId: offer.id,
+    title: `${offer.title} — ${offer.companyName}`,
+    description: offer.description ?? undefined,
+    coverUrl: offer.bannerUrl ?? undefined,
+    visibilityConfig: (offer.visibilityConfig as Record<string, unknown>) ?? undefined,
+  });
+
   return offer;
 }
 

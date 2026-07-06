@@ -7,6 +7,7 @@ import { ok } from '@/utils/apiResponse';
 import { prisma } from '@/config/prisma';
 import { PermissionAction } from '@prisma/client';
 import { recordAudit, auditContextFromRequest } from '@/engines/audit/audit.service';
+import { enqueueNotification } from '@/engines/notification/notification.service';
 
 const upsertSettingSchema = z.object({
   body: z.object({ value: z.unknown() }),
@@ -88,6 +89,16 @@ settingsRoutes.post('/users/:userId/permission-overrides', requireAuth, requireR
     create: { userId: req.params.userId as string, organizationId, module, action, allowed, createdById: req.actor!.userId },
   });
   await recordAudit({ ...auditContextFromRequest(req), module: 'SETTINGS', action: 'PERMISSION_CHANGE', entityType: 'UserPermissionOverride', entityId: override.id, after: override, isCritical: true });
+
+  // §4.3: notify the affected user
+  await enqueueNotification({
+    userId: req.params.userId as string,
+    templateKey: 'PERMISSIONS_CHANGED',
+    category: 'SERVICE',
+    to: { PUSH: req.params.userId as string, IN_APP: req.params.userId as string },
+    body: `Your access to the ${module} module was updated by JiNANAM administration.`,
+  });
+
   return ok(res, override);
 }));
 

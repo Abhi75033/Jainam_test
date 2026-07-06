@@ -75,6 +75,41 @@ visitorRoutes.get('/search/:organizationId', requireAuth, requirePermission('VIS
   return ok(res, rows, { total });
 }));
 
+visitorRoutes.get('/search/:organizationId/export', requireAuth, requirePermission('VISITORS', 'VIEW'), scopeToOrganization, asyncHandler(async (req: Request, res: Response) => {
+  const { memberPublicId, vehicleNumber, entryPublicId, from, to } = req.query as any;
+  const { rows } = await visitorsService.searchEntries(req.params.organizationId as string, {
+    memberPublicId,
+    vehicleNumber,
+    entryPublicId,
+    from: from ? new Date(from) : undefined,
+    to: to ? new Date(to) : undefined,
+    page: 1,
+    pageSize: 5000,
+  });
+  const { sendListExport, parseExportFormat } = await import('@/utils/listExport');
+  return sendListExport(
+    res,
+    parseExportFormat(req.query.format),
+    'Visitor Entries',
+    rows.map((r) => ({
+      entryId: r.publicId,
+      type: r.entryType,
+      name: r.member?.fullName ?? r.visitorName ?? '',
+      checkIn: r.checkInAt.toISOString(),
+      checkOut: r.checkOutAt?.toISOString() ?? '',
+      vehicle: r.vehicleNumber ?? '',
+    })),
+    [
+      { key: 'entryId', header: 'Entry ID' },
+      { key: 'type', header: 'Type' },
+      { key: 'name', header: 'Name' },
+      { key: 'checkIn', header: 'Check-In' },
+      { key: 'checkOut', header: 'Check-Out' },
+      { key: 'vehicle', header: 'Vehicle' },
+    ],
+  );
+}));
+
 visitorRoutes.get('/analytics/:organizationId', requireAuth, requirePermission('VISITORS', 'VIEW'), scopeToOrganization, asyncHandler(async (req: Request, res: Response) => {
   const { from, to } = req.query as any;
   const analytics = await visitorsService.visitorAnalytics(

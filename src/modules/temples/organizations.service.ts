@@ -99,6 +99,11 @@ export async function addTrustee(organizationId: string, memberId: string, desig
 export async function addVolunteer(organizationId: string, memberId: string, area?: string) {
   const volunteer = await prisma.organizationVolunteer.create({ data: { organizationId, memberId, area } });
   await prisma.member.update({ where: { id: memberId }, data: { isVolunteer: true } });
+  await prisma.memberBadge.upsert({
+    where: { memberId_badge: { memberId, badge: 'VOLUNTEER' } },
+    update: {},
+    create: { memberId, badge: 'VOLUNTEER' },
+  });
   return volunteer;
 }
 
@@ -168,7 +173,19 @@ async function recomputeAvgRating(organizationId: string) {
 }
 
 export async function addNotice(organizationId: string, input: { title: string; body: string; isPinned?: boolean; startDate?: Date; endDate?: Date }, createdById: string) {
-  return prisma.organizationNotice.create({ data: { organizationId, ...input, createdById } });
+  const notice = await prisma.organizationNotice.create({ data: { organizationId, ...input, createdById } });
+
+  // Auto feed-card (§5.13)
+  const { createAutoFeedCard } = await import('@/modules/feed/feed.service');
+  await createAutoFeedCard({
+    sourceModule: 'NOTICES',
+    sourceId: notice.id,
+    organizationId,
+    title: input.title,
+    description: input.body,
+  });
+
+  return notice;
 }
 
 export async function followOrganization(organizationId: string, memberId: string) {

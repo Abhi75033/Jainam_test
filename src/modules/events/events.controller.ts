@@ -107,6 +107,52 @@ export const submitFeedback = asyncHandler(async (req: Request, res: Response) =
   return created(res, feedback);
 });
 
+export const cancelEvent = asyncHandler(async (req: Request, res: Response) => {
+  const event = await eventsService.cancelEvent(req.params.eventId as string, req.body.reason, req.body.refundPolicyNote, {
+    userId: req.actor!.userId,
+    isSuperAdmin: req.actor!.isSuperAdmin,
+  });
+  await recordAudit({ ...auditContextFromRequest(req), organizationId: event.organizationId, module: 'EVENTS', action: 'CANCEL', entityType: 'Event', entityId: event.id, after: { cancellationReason: event.cancellationReason }, isCritical: true });
+  return ok(res, event);
+});
+
+export const listRsvps = asyncHandler(async (req: Request, res: Response) => {
+  const rows = await prisma.eventRsvp.findMany({
+    where: { eventId: req.params.eventId as string },
+    include: { member: { select: { publicId: true, fullName: true } } },
+    orderBy: { createdAt: 'asc' },
+  });
+  return ok(res, rows);
+});
+
+export const exportRsvps = asyncHandler(async (req: Request, res: Response) => {
+  const rows = await prisma.eventRsvp.findMany({
+    where: { eventId: req.params.eventId as string },
+    include: { member: { select: { publicId: true, fullName: true } } },
+    orderBy: { createdAt: 'asc' },
+  });
+  const { sendListExport, parseExportFormat } = await import('@/utils/listExport');
+  return sendListExport(
+    res,
+    parseExportFormat(req.query.format),
+    'Event RSVP List',
+    rows.map((r) => ({
+      member: `${r.member.fullName} (${r.member.publicId})`,
+      attendees: r.attendeeCount,
+      status: r.status,
+      waitingPosition: r.waitingListPosition ?? '',
+      rsvpAt: r.createdAt.toISOString(),
+    })),
+    [
+      { key: 'member', header: 'Member' },
+      { key: 'attendees', header: 'Attendees' },
+      { key: 'status', header: 'Status' },
+      { key: 'waitingPosition', header: 'Waiting #' },
+      { key: 'rsvpAt', header: 'RSVP At' },
+    ],
+  );
+});
+
 export const orgDashboard = asyncHandler(async (req: Request, res: Response) => {
   const stats = await eventsService.orgEventDashboard(req.params.organizationId as string);
   return ok(res, stats);
