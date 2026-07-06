@@ -86,7 +86,28 @@ async function flagSuspiciousIfNeeded(userId: string, mobile: string) {
   ]);
 
   const suspicious = distinctDevices > SUSPICIOUS_DEVICE_THRESHOLD || recentFailures >= SUSPICIOUS_FAILED_LOGIN_THRESHOLD;
+
+  if (suspicious) {
+    await notifySuperAdminsOfSuspiciousActivity(mobile, { distinctDevices, recentFailures });
+  }
   return suspicious;
+}
+
+/** §4.3 staff/admin trigger: failed-login / multi-device activity alerts Super Admins for review. */
+async function notifySuperAdminsOfSuspiciousActivity(mobile: string, stats: { distinctDevices: number; recentFailures: number }) {
+  const { enqueueNotification } = await import('@/engines/notification/notification.service');
+  const superAdmins = await prisma.user.findMany({ where: { primaryRoleKey: 'SUPER_ADMIN', status: 'ACTIVE' }, select: { id: true } });
+  await Promise.all(
+    superAdmins.map((admin) =>
+      enqueueNotification({
+        userId: admin.id,
+        templateKey: 'SUSPICIOUS_LOGIN_ACTIVITY',
+        category: 'SERVICE',
+        to: { IN_APP: admin.id, PUSH: admin.id },
+        body: `Suspicious login activity on ${mobile}: ${stats.recentFailures} failed attempt(s), ${stats.distinctDevices} device(s) in the last ${SUSPICIOUS_WINDOW_HOURS}h. Review in Settings → Login History.`,
+      }),
+    ),
+  );
 }
 
 export async function verifyOtpAndAuthenticate(input: {
