@@ -22,6 +22,7 @@ staffRoutes.post('/me/attendance/check-out', requireAuth, staffController.checkO
 staffRoutes.post('/me/leaves', requireAuth, validate(staffLeaveSchema), staffController.applyLeave);
 staffRoutes.patch('/leaves/:leaveId', requireAuth, requirePermission('STAFF', 'APPROVE'), validate(staffLeaveDecisionSchema), staffController.decideLeave);
 staffRoutes.get('/dashboard/:organizationId', requireAuth, requirePermission('STAFF', 'VIEW'), scopeToOrganization, staffController.dashboardStats);
+staffRoutes.get('/org/:organizationId', requireAuth, requirePermission('STAFF', 'VIEW'), scopeToOrganization, staffController.listOrgStaff);
 staffRoutes.get('/me/qr', requireAuth, staffController.myStaffQr);
 staffRoutes.post('/:staffId/shifts', requireAuth, requirePermission('STAFF', 'EDIT'), staffController.createShift);
 staffRoutes.get('/:staffId/shifts', requireAuth, requirePermission('STAFF', 'VIEW'), staffController.listShifts);

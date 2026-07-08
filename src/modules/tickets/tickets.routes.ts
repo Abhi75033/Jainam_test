@@ -15,6 +15,9 @@ ticketRoutes.post('/events/:eventId/categories', requireAuth, requireRole('SUPER
 // Attendee member-ID validation during checkout (§5.9)
 ticketRoutes.get('/validate-attendee', requireAuth, validate(attendeeLookupSchema), ticketsController.validateAttendee);
 
+// My tickets (member) / all tickets (Super Admin)
+ticketRoutes.get('/my', requireAuth, ticketsController.listMyTickets);
+
 // Purchase (gateway payment ref + idempotency key)
 ticketRoutes.post('/events/:eventId/purchase', requireAuth, validate(purchaseTicketsSchema), ticketsController.purchaseTickets);
 

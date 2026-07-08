@@ -19,6 +19,7 @@ trackingRoutes.get('/routes', requireAuth, trackingController.listRoutes);
 // Journeys: manual tracking + timeline
 trackingRoutes.post('/journeys', requireAuth, requirePermission('TRACKING', 'CREATE'), validate(startJourneySchema), trackingController.startJourney);
 trackingRoutes.post('/journeys/:journeyId/events', requireAuth, requirePermission('TRACKING', 'EDIT'), validate(journeyEventSchema), trackingController.recordJourneyEvent);
+trackingRoutes.get('/journeys/active', requireAuth, trackingController.activeJourneys);
 trackingRoutes.get('/journeys/:journeyId/timeline', requireAuth, trackingController.journeyTimeline);
 
 // Live map for admin dashboards

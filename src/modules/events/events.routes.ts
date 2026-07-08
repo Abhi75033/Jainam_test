@@ -23,6 +23,10 @@ const cancelSchema = z.object({
 
 export const eventRoutes = Router();
 
+// List endpoints — must be defined BEFORE /:eventId to avoid route conflicts
+eventRoutes.get('/', requireAuth, requireRole('SUPER_ADMIN'), eventsController.listAllEvents);
+eventRoutes.get('/org/:organizationId', requireAuth, requirePermission('EVENTS', 'VIEW'), scopeToOrganization, eventsController.listOrgEvents);
+
 // Creation: free events by org admins with EVENTS:CREATE; paid events blocked
 // for non-Super-Admin inside the service with the "raise support ticket" message (§5.9)
 eventRoutes.post('/', requireAuth, requirePermission('EVENTS', 'CREATE'), scopeToOrganization, validate(createEventSchema), eventsController.createEvent);

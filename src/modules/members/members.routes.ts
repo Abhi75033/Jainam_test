@@ -28,6 +28,9 @@ export const memberRoutes = Router();
 // Geofence ping (§4.3): updates current GPS + fires "temple within 5km" notifications
 memberRoutes.post('/me/location', requireAuth, validate(locationPingSchema), locationPing);
 
+// Admin member register list (must precede /:publicId)
+memberRoutes.get('/', requireAuth, requirePermission('MEMBERS', 'VIEW'), membersController.listMembers);
+memberRoutes.post('/admin-create', requireAuth, requirePermission('MEMBERS', 'CREATE'), membersController.adminCreateMember);
 memberRoutes.post('/register/jain', requireAuth, validate(registerJainMemberSchema), membersController.registerJainMember);
 memberRoutes.post('/register/non-jain', requireAuth, validate(registerNonJainMemberSchema), membersController.registerNonJainMember);
 memberRoutes.get('/me', requireAuth, membersController.getMyProfile);

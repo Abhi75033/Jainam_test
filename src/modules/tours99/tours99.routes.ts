@@ -68,6 +68,22 @@ const assignRoomSchema = z.object({
 export const tourRoutes = Router();
 
 // Tour CRUD (authorized admins; TOURS permission)
+tourRoutes.get('/', requireAuth, asyncHandler(async (req: Request, res: Response) => {
+  const { prisma } = await import('@/config/prisma');
+  const { status } = req.query as { status?: string };
+  const rows = await prisma.tour.findMany({
+    where: { deletedAt: null, ...(status && status !== 'ALL' ? { status: status as any } : {}) },
+    include: {
+      category: { select: { name: true } },
+      primaryMonk: { select: { publicId: true, dikshaName: true } },
+      _count: { select: { participants: true } },
+    },
+    orderBy: { startDate: 'desc' },
+    take: 200,
+  });
+  return ok(res, rows);
+}));
+
 tourRoutes.post('/', requireAuth, requirePermission('TOURS', 'CREATE'), validate(createTourSchema), asyncHandler(async (req: Request, res: Response) => {
   const tour = await toursService.createTour({ ...req.body, createdById: req.actor!.userId });
   return created(res, tour);
@@ -92,6 +108,25 @@ tourRoutes.post('/:tourId/transition', requireAuth, requirePermission('TOURS', '
 tourRoutes.post('/:tourId/participants', requireAuth, requirePermission('TOURS', 'EDIT'), validate(addParticipantSchema), asyncHandler(async (req: Request, res: Response) => {
   const participant = await toursService.addParticipant(req.params.tourId as string, req.body.memberPublicId, req.body.parentMemberPublicId);
   return created(res, participant);
+}));
+
+tourRoutes.get('/:tourId/participants', requireAuth, requirePermission('TOURS', 'VIEW'), asyncHandler(async (req: Request, res: Response) => {
+  const { prisma } = await import('@/config/prisma');
+  const rows = await prisma.tourParticipant.findMany({
+    where: { tourId: req.params.tourId as string },
+    include: {
+      member: { select: { publicId: true, fullName: true, gender: true, mobile: true, photoUrl: true } },
+      parentMember: { select: { publicId: true, fullName: true } },
+      medicalForm: { select: { id: true } },
+      dailyJatraCounts: { orderBy: { date: 'desc' }, take: 1 },
+    },
+    orderBy: { createdAt: 'asc' },
+  });
+  return ok(res, rows.map((r) => ({
+    ...r,
+    medicalComplete: !!r.medicalForm,
+    cumulativeCount: r.dailyJatraCounts[0]?.cumulativeCount ?? 0,
+  })));
 }));
 
 // Medical forms visible ONLY to tour admin + Super Admin (§5.19) — guarded by TOURS:VIEW permission

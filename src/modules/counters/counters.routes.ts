@@ -25,7 +25,8 @@ async function requireMember(userId: string) {
 export const counterRoutes = Router();
 
 counterRoutes.get('/my', requireAuth, asyncHandler(async (req: Request, res: Response) => {
-  const member = await requireMember(req.actor!.userId);
+  const member = await prisma.member.findUnique({ where: { userId: req.actor!.userId } });
+  if (!member) return ok(res, []); // accounts without a member profile have no counters
   const counters = await countersService.myCounters(member.id);
   return ok(res, counters.map((c) => ({ ...c, count: c.count.toString() })));
 }));

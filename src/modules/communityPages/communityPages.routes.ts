@@ -43,6 +43,20 @@ async function requireMember(userId: string) {
 
 export const communityPageRoutes = Router();
 
+// List (any authenticated user; public pages directory)
+communityPageRoutes.get('/', requireAuth, asyncHandler(async (_req: Request, res: Response) => {
+  const rows = await prisma.communityPage.findMany({
+    where: { deletedAt: null },
+    include: {
+      category: { select: { name: true } },
+      _count: { select: { members: { where: { status: 'APPROVED' } }, posts: true } },
+    },
+    orderBy: { createdAt: 'desc' },
+    take: 200,
+  });
+  return ok(res, rows);
+}));
+
 // Created by Super Admin only (§5.16)
 communityPageRoutes.post('/', requireAuth, requireRole('SUPER_ADMIN'), validate(createPageSchema), asyncHandler(async (req: Request, res: Response) => {
   const page = await pagesService.createPage({ ...req.body, createdById: req.actor!.userId });

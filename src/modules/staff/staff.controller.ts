@@ -61,6 +61,20 @@ export const dashboardStats = asyncHandler(async (req: Request, res: Response) =
   return ok(res, stats);
 });
 
+/** Org staff register list (STAFF:VIEW, tenant-scoped). */
+export const listOrgStaff = asyncHandler(async (req: Request, res: Response) => {
+  const rows = await prisma.staff.findMany({
+    where: { organizationId: req.params.organizationId as string, deletedAt: null },
+    include: {
+      member: { select: { fullName: true, mobile: true, photoUrl: true, publicId: true } },
+      department: { select: { name: true } },
+      designation: { select: { name: true } },
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+  return ok(res, rows);
+});
+
 /** Staff QR identity — downloadable/printable (§5.12). */
 export const myStaffQr = asyncHandler(async (req: Request, res: Response) => {
   const staff = await prisma.staff.findUnique({

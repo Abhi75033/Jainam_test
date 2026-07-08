@@ -58,6 +58,30 @@ export const attendance = asyncHandler(async (req: Request, res: Response) => {
   return ok(res, stats);
 });
 
+/** My tickets list (buyer or attendee); Super Admin sees all tickets. */
+export const listMyTickets = asyncHandler(async (req: Request, res: Response) => {
+  const include = {
+    event: { select: { title: true, startAt: true, venue: true, publicId: true } },
+    ticketCategory: { select: { name: true } },
+    seat: { select: { label: true } },
+    buyerMember: { select: { fullName: true, publicId: true } },
+  } as const;
+
+  if (req.actor!.isSuperAdmin) {
+    const rows = await prisma.ticket.findMany({ include, orderBy: { createdAt: 'desc' }, take: 200 });
+    return ok(res, rows);
+  }
+
+  const member = await prisma.member.findUnique({ where: { userId: req.actor!.userId } });
+  if (!member) return ok(res, []);
+  const rows = await prisma.ticket.findMany({
+    where: { OR: [{ buyerMemberId: member.id }, { attendeeMemberId: member.id }] },
+    include,
+    orderBy: { createdAt: 'desc' },
+  });
+  return ok(res, rows);
+});
+
 /** Downloadable ticket PDF with embedded QR (§5.9 "download ticket"). */
 export const downloadTicket = asyncHandler(async (req: Request, res: Response) => {
   const ticket = await prisma.ticket.findUnique({

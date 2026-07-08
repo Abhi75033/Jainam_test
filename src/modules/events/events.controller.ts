@@ -22,6 +22,41 @@ export const createEvent = asyncHandler(async (req: Request, res: Response) => {
   return created(res, event);
 });
 
+export const listAllEvents = asyncHandler(async (req: Request, res: Response) => {
+  const { status, page = '1', pageSize = '20', q } = req.query as Record<string, string>;
+  const skip = (parseInt(page) - 1) * parseInt(pageSize);
+  const where: any = { deletedAt: null };
+  if (status && status !== 'ALL') where.status = status;
+  if (q) where.title = { contains: q, mode: 'insensitive' };
+  const [items, total] = await Promise.all([
+    prisma.event.findMany({
+      where, skip, take: parseInt(pageSize),
+      orderBy: { startAt: 'desc' },
+      include: { category: { select: { name: true } }, organization: { select: { name: true } } },
+    }),
+    prisma.event.count({ where }),
+  ]);
+  return ok(res, { items, total, page: parseInt(page), pageSize: parseInt(pageSize) });
+});
+
+export const listOrgEvents = asyncHandler(async (req: Request, res: Response) => {
+  const { organizationId } = req.params;
+  const { status, page = '1', pageSize = '20', q } = req.query as Record<string, string>;
+  const skip = (parseInt(page) - 1) * parseInt(pageSize);
+  const where: any = { organizationId, deletedAt: null };
+  if (status && status !== 'ALL') where.status = status;
+  if (q) where.title = { contains: q, mode: 'insensitive' };
+  const [items, total] = await Promise.all([
+    prisma.event.findMany({
+      where, skip, take: parseInt(pageSize),
+      orderBy: { startAt: 'desc' },
+      include: { category: { select: { name: true } } },
+    }),
+    prisma.event.count({ where }),
+  ]);
+  return ok(res, { items, total, page: parseInt(page), pageSize: parseInt(pageSize) });
+});
+
 export const updateEvent = asyncHandler(async (req: Request, res: Response) => {
   const existing = await eventsService.getEvent(req.params.eventId as string);
   if (['COMPLETED', 'GALLERY_UPLOADED', 'ARCHIVED'].includes(existing.status) && !req.actor!.isSuperAdmin) {

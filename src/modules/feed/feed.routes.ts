@@ -40,9 +40,28 @@ feedRoutes.get(
   requireAuth,
   validate(feedQuerySchema),
   asyncHandler(async (req: Request, res: Response) => {
-    const member = await prisma.member.findUnique({ where: { userId: req.actor!.userId } });
-    if (!member) throw ApiError.notFound('Member profile not found');
     const { page, pageSize } = req.query as any;
+    const member = await prisma.member.findUnique({ where: { userId: req.actor!.userId } });
+
+    // Accounts without a member profile (Super Admin, staff-only) get the
+    // global chronological view instead of the personalized smart feed.
+    if (!member) {
+      const posts = await prisma.feedPost.findMany({
+        where: { isActive: true, deletedAt: null },
+        include: { organization: { select: { name: true, publicId: true, logoUrl: true } }, category: true, poll: true },
+        orderBy: { createdAt: 'desc' },
+        skip: (Number(page) - 1) * Number(pageSize),
+        take: Number(pageSize),
+      });
+      return ok(res, {
+        topBanner: null,
+        items: posts.map((post) => ({ kind: 'POST', post })),
+        total: posts.length,
+        page: Number(page),
+        pageSize: Number(pageSize),
+      });
+    }
+
     const feed = await feedService.getSmartFeed(member.id, Number(page), Number(pageSize));
     return ok(res, feed);
   }),

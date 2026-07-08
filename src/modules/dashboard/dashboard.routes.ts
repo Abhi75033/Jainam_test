@@ -76,9 +76,28 @@ dashboardRoutes.get(
       where: { userId: req.actor!.userId },
       include: { monkFollows: { include: { monk: { select: { publicId: true, dikshaName: true, photoUrl: true } } } } },
     });
-    if (!member) throw ApiError.notFound('Member profile not found');
 
     const now = new Date();
+
+    // Accounts without a member profile (Super Admin) get the generic view
+    if (!member) {
+      const [genericEvents, genericAnnouncements] = await Promise.all([
+        prisma.event.findMany({
+          where: { deletedAt: null, status: { in: ['PUBLISHED', 'RSVP_SALES_OPEN'] }, startAt: { gte: now } },
+          select: { publicId: true, title: true, startAt: true, venue: true, bannerUrl: true },
+          orderBy: { startAt: 'asc' },
+          take: 5,
+        }),
+        prisma.announcement.findMany({ where: { deletedAt: null }, orderBy: { createdAt: 'desc' }, take: 5 }),
+      ]);
+      return ok(res, {
+        trackedMonks: [],
+        todaysTithi: { message: 'No tithi available' },
+        upcomingEvents: genericEvents,
+        announcements: genericAnnouncements,
+        feedPreview: [],
+      });
+    }
     const [tithi, upcomingEvents, announcements, feedPreview] = await Promise.all([
       member.tithiCalendarTypeId ? todaysTithi(member.tithiCalendarTypeId) : Promise.resolve(null),
       prisma.event.findMany({

@@ -23,6 +23,7 @@ donationRoutes.get('/campaign-config/:flowType', requireAuth, donationsControlle
 donationRoutes.patch('/campaign-config/:flowType', requireAuth, requireRole('SUPER_ADMIN'), donationsController.updateCampaignConfig);
 
 // Listings
+donationRoutes.get('/', requireAuth, donationsController.listAllDonations); // Super Admin platform-wide
 donationRoutes.get('/my', requireAuth, validate(donationListQuerySchema), donationsController.myDonations);
 donationRoutes.get('/org/:organizationId', requireAuth, requirePermission('DONATIONS', 'VIEW'), scopeToOrganization, validate(donationListQuerySchema), donationsController.orgDonations);
 donationRoutes.get('/org/:organizationId/export', requireAuth, requirePermission('DONATIONS', 'VIEW'), scopeToOrganization, donationsController.orgDonationsExport);

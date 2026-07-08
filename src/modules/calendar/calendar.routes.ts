@@ -51,7 +51,12 @@ calendarRoutes.get('/today', requireAuth, asyncHandler(async (req: Request, res:
     const member = await prisma.member.findUnique({ where: { userId: req.actor!.userId } });
     calendarTypeId = member?.tithiCalendarTypeId ?? undefined;
   }
-  if (!calendarTypeId) throw ApiError.validation({ typeId: ['Select a tithi calendar in settings or pass ?typeId='] });
+  if (!calendarTypeId) {
+    // No member profile / no selection (e.g. Super Admin) — default to the first calendar type
+    const firstType = await prisma.tithiCalendarType.findFirst({ where: { deletedAt: null }, orderBy: { name: 'asc' } });
+    calendarTypeId = firstType?.id;
+  }
+  if (!calendarTypeId) return ok(res, { message: 'No tithi available' });
   const entry = await calendarService.todaysTithi(calendarTypeId);
   return ok(res, entry ?? { message: 'No tithi available' });
 }));

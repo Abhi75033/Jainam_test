@@ -71,7 +71,14 @@ export const me = asyncHandler(async (req: Request, res: Response) => {
 
 export const myModules = asyncHandler(async (req: Request, res: Response) => {
   const effective = await loadEffectivePermissions(req.actor!.userId);
-  return ok(res, { modules: listAssignedModules(effective), organizationIds: effective.organizationIds, isSuperAdmin: effective.isSuperAdmin });
+  return ok(res, {
+    modules: listAssignedModules(effective),
+    organizationIds: effective.organizationIds,
+    isSuperAdmin: effective.isSuperAdmin,
+    // module -> allowed actions map so clients can gate UI (canDo) without extra calls
+    permissions: effective.permissions,
+    organizationOverrides: effective.organizationOverrides,
+  });
 });
 
 export const createAdminAccount = asyncHandler(async (req: Request, res: Response) => {

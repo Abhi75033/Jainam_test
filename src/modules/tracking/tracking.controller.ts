@@ -41,6 +41,20 @@ export const journeyTimeline = asyncHandler(async (req: Request, res: Response) 
   return ok(res, timeline);
 });
 
+export const activeJourneys = asyncHandler(async (_req: Request, res: Response) => {
+  const { prisma } = await import('@/config/prisma');
+  const rows = await prisma.journey.findMany({
+    where: { status: 'IN_PROGRESS' },
+    include: {
+      monk: { select: { publicId: true, dikshaName: true, photoUrl: true } },
+      route: { select: { name: true, journeyDate: true, stops: true } },
+    },
+    orderBy: { startedAt: 'desc' },
+    take: 100,
+  });
+  return ok(res, rows);
+});
+
 export const liveMap = asyncHandler(async (req: Request, res: Response) => {
   const markers = await trackingService.getLiveMap(req.query as any);
   return ok(res, markers);

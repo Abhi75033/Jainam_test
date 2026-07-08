@@ -29,6 +29,7 @@ bookingRoutes.get('/items/:itemId/availability', requireAuth, validate(availabil
 
 // Member flow
 bookingRoutes.post('/', requireAuth, validate(submitBookingSchema), bookingsController.submitBooking);
+bookingRoutes.get('/', requireAuth, bookingsController.listAllBookings); // Super Admin platform-wide list
 bookingRoutes.get('/my', requireAuth, validate(myBookingsQuerySchema), bookingsController.myBookings);
 bookingRoutes.get('/:bookingId', requireAuth, bookingsController.getBooking);
 bookingRoutes.post('/:bookingId/payment-proof', requireAuth, validate(submitPaymentProofSchema), bookingsController.submitPaymentProof);

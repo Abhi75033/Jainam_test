@@ -10,8 +10,8 @@ export const requestOtpSchema = z.object({
 });
 
 const deviceInfoSchema = z.object({
-  deviceId: z.string().min(1),
-  deviceType: z.enum(['ANDROID', 'IOS', 'WEB']),
+  deviceId: z.string().min(1).optional(),
+  deviceType: z.enum(['ANDROID', 'IOS', 'WEB']).optional().default('WEB'),
   os: z.string().optional(),
   appVersion: z.string().optional(),
 });

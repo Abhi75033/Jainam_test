@@ -114,6 +114,24 @@ export const orgDonationsExport = asyncHandler(async (req: Request, res: Respons
   );
 });
 
+/** Platform-wide donation list — Super Admin only; org admins use /donations/org/:id. */
+export const listAllDonations = asyncHandler(async (req: Request, res: Response) => {
+  if (!req.actor!.isSuperAdmin) throw ApiError.forbidden('Platform-wide donation list is Super Admin only');
+  const { status } = req.query as { status?: string };
+  const rows = await prisma.donation.findMany({
+    where: { ...(status && status !== 'ALL' ? { status: status as any } : {}) },
+    include: {
+      organization: { select: { name: true, publicId: true } },
+      member: { select: { fullName: true, publicId: true } },
+      categorySplits: { include: { donationCategory: { select: { name: true } } } },
+      receipt: { select: { publicId: true, pdfUrl: true } },
+    },
+    orderBy: { createdAt: 'desc' },
+    take: 200,
+  });
+  return ok(res, rows);
+});
+
 export const myDonations = asyncHandler(async (req: Request, res: Response) => {
   const member = await requireMember(req.actor!.userId);
   const { page = 1, pageSize = 20 } = req.query as any;

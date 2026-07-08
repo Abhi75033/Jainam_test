@@ -54,6 +54,20 @@ ticketsSupportRoutes.get(
   }),
 );
 
+// Role-aware root list: Super Admin sees the full queue, everyone else their own tickets
+ticketsSupportRoutes.get(
+  '/',
+  requireAuth,
+  asyncHandler(async (req: Request, res: Response) => {
+    if (req.actor!.isSuperAdmin) {
+      const { rows, total } = await supportService.listTickets({ page: 1, pageSize: 100 });
+      return ok(res, rows, { total });
+    }
+    const tickets = await supportService.listMyTickets(req.actor!.userId);
+    return ok(res, tickets);
+  }),
+);
+
 // Super Admin queue + actions (§5.9)
 ticketsSupportRoutes.get(
   '/queue',

@@ -7,11 +7,17 @@ import { signAccessToken, signRefreshToken, verifyRefreshToken } from '@/engines
 import { logger } from '@/config/logger';
 
 interface DeviceMeta {
-  deviceId: string;
+  deviceId?: string;  // optional — server generates a fallback from IP+timestamp if absent
   deviceType: 'ANDROID' | 'IOS' | 'WEB';
   os?: string;
   appVersion?: string;
   ip?: string;
+}
+
+function resolveDeviceId(device: DeviceMeta): string {
+  if (device.deviceId) return device.deviceId;
+  // Fallback: stable per-IP+type identifier so sessions remain consistent
+  return `server-${device.deviceType}-${crypto.createHash('sha1').update((device.ip || 'unknown') + device.deviceType).digest('hex').slice(0, 12)}`;
 }
 
 const SUSPICIOUS_DEVICE_THRESHOLD = 3; // distinct devices active within window below
@@ -41,8 +47,9 @@ export async function requestOtpForPurpose(mobile: string, purpose: 'LOGIN' | 'R
 }
 
 async function issueTokensForUser(user: { id: string; publicId: string | null; primaryRoleKey: any }, device: DeviceMeta) {
+  const resolvedDeviceId = resolveDeviceId(device);
   const refreshTokenVersion = crypto.randomUUID();
-  const refreshToken = signRefreshToken({ sub: user.id, deviceId: device.deviceId, tokenVersion: refreshTokenVersion });
+  const refreshToken = signRefreshToken({ sub: user.id, deviceId: resolvedDeviceId, tokenVersion: refreshTokenVersion });
   const refreshTokenHash = await bcrypt.hash(refreshToken, 8);
 
   const accessToken = signAccessToken({
@@ -50,11 +57,11 @@ async function issueTokensForUser(user: { id: string; publicId: string | null; p
     publicId: user.publicId,
     role: user.primaryRoleKey,
     isSuperAdmin: user.primaryRoleKey === 'SUPER_ADMIN',
-    deviceId: device.deviceId,
+    deviceId: resolvedDeviceId,
   });
 
   await prisma.userDevice.upsert({
-    where: { userId_deviceId: { userId: user.id, deviceId: device.deviceId } },
+    where: { userId_deviceId: { userId: user.id, deviceId: resolvedDeviceId } },
     update: {
       deviceType: device.deviceType,
       os: device.os,
@@ -66,7 +73,7 @@ async function issueTokensForUser(user: { id: string; publicId: string | null; p
     },
     create: {
       userId: user.id,
-      deviceId: device.deviceId,
+      deviceId: resolvedDeviceId,
       deviceType: device.deviceType,
       os: device.os,
       appVersion: device.appVersion,
@@ -149,7 +156,7 @@ export async function verifyOtpAndAuthenticate(input: {
       data: {
         userId: user.id,
         mobile: input.mobile,
-        deviceId: input.device.deviceId,
+        deviceId: resolveDeviceId(input.device),
         ip: input.device.ip,
         success: true,
         flaggedSuspicious: suspicious,
@@ -163,10 +170,11 @@ export async function verifyOtpAndAuthenticate(input: {
 
 export async function loginWithPassword(input: { mobile: string; password: string; device: DeviceMeta }) {
   const user = await prisma.user.findUnique({ where: { mobile: input.mobile } });
+  const deviceId = resolveDeviceId(input.device);
 
   if (!user || !user.passwordHash) {
     await prisma.loginHistory.create({
-      data: { mobile: input.mobile, deviceId: input.device.deviceId, ip: input.device.ip, success: false, reason: 'INVALID_CREDENTIALS' },
+      data: { mobile: input.mobile, deviceId, ip: input.device.ip, success: false, reason: 'INVALID_CREDENTIALS' },
     });
     throw ApiError.unauthorized('Invalid mobile number or password');
   }
@@ -174,7 +182,7 @@ export async function loginWithPassword(input: { mobile: string; password: strin
   const valid = await bcrypt.compare(input.password, user.passwordHash);
   if (!valid) {
     await prisma.loginHistory.create({
-      data: { userId: user.id, mobile: input.mobile, deviceId: input.device.deviceId, ip: input.device.ip, success: false, reason: 'INVALID_CREDENTIALS' },
+      data: { userId: user.id, mobile: input.mobile, deviceId, ip: input.device.ip, success: false, reason: 'INVALID_CREDENTIALS' },
     });
     throw ApiError.unauthorized('Invalid mobile number or password');
   }
@@ -188,7 +196,7 @@ export async function loginWithPassword(input: { mobile: string; password: strin
 
   await prisma.$transaction([
     prisma.loginHistory.create({
-      data: { userId: user.id, mobile: input.mobile, deviceId: input.device.deviceId, ip: input.device.ip, success: true, flaggedSuspicious: suspicious },
+      data: { userId: user.id, mobile: input.mobile, deviceId, ip: input.device.ip, success: true, flaggedSuspicious: suspicious },
     }),
     prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } }),
   ]);

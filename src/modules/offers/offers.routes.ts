@@ -40,6 +40,19 @@ async function requireMember(userId: string) {
 
 export const offerRoutes = Router();
 
+// Root list: Super Admin sees all (incl. expired via ?includeExpired=true); members see active offers
+offerRoutes.get('/', requireAuth, asyncHandler(async (req: Request, res: Response) => {
+  const now = new Date();
+  const includeExpired = req.actor!.isSuperAdmin && req.query.includeExpired === 'true';
+  const offers = await prisma.offer.findMany({
+    where: { deletedAt: null, ...(includeExpired ? {} : { endAt: { gte: now } }) },
+    include: { category: { select: { name: true } }, _count: { select: { saves: true } } },
+    orderBy: { createdAt: 'desc' },
+    take: 200,
+  });
+  return ok(res, offers);
+}));
+
 // Super Admin CRUD (§5.14)
 offerRoutes.post('/', requireAuth, requireRole('SUPER_ADMIN'), validate(createOfferSchema), asyncHandler(async (req: Request, res: Response) => {
   const offer = await offersService.createOffer({ ...req.body, createdById: req.actor!.userId });

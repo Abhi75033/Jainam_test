@@ -101,6 +101,23 @@ export const getBooking = asyncHandler(async (req: Request, res: Response) => {
   return ok(res, booking);
 });
 
+/** Platform-wide booking list — Super Admin only; org admins use /bookings/org/:id. */
+export const listAllBookings = asyncHandler(async (req: Request, res: Response) => {
+  if (!req.actor!.isSuperAdmin) throw ApiError.forbidden('Platform-wide booking list is Super Admin only');
+  const { status } = req.query as { status?: string };
+  const rows = await prisma.booking.findMany({
+    where: { deletedAt: null, ...(status && status !== 'ALL' ? { status: status as any } : {}) },
+    include: {
+      bookingItem: { select: { name: true, type: true } },
+      organization: { select: { name: true, publicId: true } },
+      member: { select: { fullName: true, publicId: true } },
+    },
+    orderBy: { createdAt: 'desc' },
+    take: 200,
+  });
+  return ok(res, rows);
+});
+
 export const orgBookings = asyncHandler(async (req: Request, res: Response) => {
   const { status, page = 1, pageSize = 20 } = req.query as any;
   const { total, rows } = await bookingsService.listOrgBookings(req.params.organizationId as string, { status, page: Number(page), pageSize: Number(pageSize) });

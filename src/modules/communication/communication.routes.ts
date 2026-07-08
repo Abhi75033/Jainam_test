@@ -70,6 +70,45 @@ communicationRoutes.get(
   }),
 );
 
+// Root list: Super Admin sees all org-to-org traffic
+communicationRoutes.get(
+  '/',
+  requireAuth,
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.actor!.isSuperAdmin) throw ApiError.forbidden('Platform-wide communication list is Super Admin only');
+    const messages = await prisma.orgCommunication.findMany({
+      include: {
+        fromOrg: { select: { name: true, publicId: true } },
+        toOrg: { select: { name: true, publicId: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 200,
+    });
+    return ok(res, messages);
+  }),
+);
+
+// Org-scoped list alias (tenant-scoped)
+communicationRoutes.get(
+  '/org/:organizationId',
+  requireAuth,
+  requirePermission('COMMUNICATION', 'VIEW'),
+  scopeToOrganization,
+  asyncHandler(async (req: Request, res: Response) => {
+    const organizationId = req.params.organizationId as string;
+    const messages = await prisma.orgCommunication.findMany({
+      where: { OR: [{ fromOrgId: organizationId }, { toOrgId: organizationId }, { toOrgId: null }] },
+      include: {
+        fromOrg: { select: { name: true, publicId: true } },
+        toOrg: { select: { name: true, publicId: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 200,
+    });
+    return ok(res, messages);
+  }),
+);
+
 // Super Admin delete only (§5.21)
 communicationRoutes.delete(
   '/messages/:messageId',
