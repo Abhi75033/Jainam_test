@@ -113,6 +113,11 @@ function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): nu
 function rankPost(post: any, ctx: FeedContext): number {
   const cfg = (post.visibilityConfig ?? {}) as any;
 
+  // Pinned posts (global or local) get highest priority
+  if (post.isPinned) {
+    return -1000;
+  }
+
   // P1: followed entities
   if (post.organizationId && ctx.followedOrgIds.has(post.organizationId)) {
     return computeFeedPriorityRank({ isFollowed: true, isCommunityMatch: false, geoRingIndex: null, isGlobalFallback: false });
@@ -152,16 +157,110 @@ function rankPost(post: any, ctx: FeedContext): number {
   return 99999; // not eligible — filtered out below
 }
 
-export async function getSmartFeed(memberId: string, page: number, pageSize: number) {
+export async function getSmartFeed(
+  memberId: string,
+  page: number,
+  pageSize: number,
+  filters: { q?: string; categoryId?: string; filterKeys?: string[]; savedOnly?: boolean } = {}
+) {
   const ctx = await buildFeedContext(memberId);
 
   // Candidate pool: active, non-deleted posts, newest first within rank
-  const candidates = await prisma.feedPost.findMany({
-    where: { isActive: true, deletedAt: null },
-    include: { organization: { select: { name: true, publicId: true, logoUrl: true } }, category: true, poll: true },
-    orderBy: { createdAt: 'desc' },
-    take: 500, // rank window; older content falls off the smart feed
-  });
+  let candidates: any[];
+  if (filters.savedOnly) {
+    const saves = await prisma.feedPostSave.findMany({
+      where: { memberId },
+      include: {
+        feedPost: {
+          include: {
+            organization: { select: { id: true, name: true, publicId: true, logoUrl: true, type: true } },
+            category: true,
+            poll: true,
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    candidates = saves.map((s) => s.feedPost).filter(Boolean);
+  } else {
+    candidates = await prisma.feedPost.findMany({
+      where: { isActive: true, deletedAt: null },
+      include: {
+        organization: { select: { id: true, name: true, publicId: true, logoUrl: true, type: true } },
+        category: true,
+        poll: true,
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 500, // rank window; older content falls off the smart feed
+    });
+  }
+
+  // Apply search query 'q'
+  if (filters.q) {
+    const searchVal = filters.q.toLowerCase();
+    candidates = candidates.filter(
+      (post) =>
+        post.title?.toLowerCase().includes(searchVal) ||
+        post.description?.toLowerCase().includes(searchVal) ||
+        post.organization?.name?.toLowerCase().includes(searchVal)
+    );
+  }
+
+  // Apply category filtering
+  if (filters.categoryId) {
+    candidates = candidates.filter((post) => post.categoryId === filters.categoryId);
+  }
+
+  // Apply community & following key filters
+  if (filters.filterKeys && filters.filterKeys.length > 0) {
+    candidates = candidates.filter((post) => {
+      return filters.filterKeys!.some((key) => {
+        if (key === 'myTemples') {
+          return (
+            post.organization?.type === 'TEMPLE' &&
+            post.organizationId &&
+            ctx.followedOrgIds.has(post.organizationId)
+          );
+        }
+        if (key === 'myJainCentres') {
+          return (
+            post.organization?.type === 'JAIN_CENTER' &&
+            post.organizationId &&
+            ctx.followedOrgIds.has(post.organizationId)
+          );
+        }
+        if (key === 'myMonks') {
+          const cfg = (post.visibilityConfig ?? {}) as any;
+          const cfgMonks: string[] = cfg.followedEntityIds?.monkIds ?? [];
+          return cfgMonks.some((id) => ctx.followedMonkIds.has(id));
+        }
+        if (key === 'nearby') {
+          const cfg = (post.visibilityConfig ?? {}) as any;
+          if (cfg.geo?.centerLat !== undefined && cfg.geo?.centerLng !== undefined && ctx.lat != null && ctx.lng != null) {
+            const distance = haversineKm(ctx.lat, ctx.lng, cfg.geo.centerLat, cfg.geo.centerLng);
+            return distance <= 20; // 20KM radius
+          }
+          return false;
+        }
+        if (key === 'myCommunity') {
+          const cfg = (post.visibilityConfig ?? {}) as any;
+          const communityMatch =
+            (cfg.community?.gacchaIds?.includes(ctx.gacchaId) && ctx.gacchaId) ||
+            (cfg.community?.subCommunityIds?.includes(ctx.subCommunityId) && ctx.subCommunityId) ||
+            (cfg.community?.communityIds?.includes(ctx.communityId) && ctx.communityId);
+          return !!communityMatch;
+        }
+        if (key === 'events') return post.category?.name === 'Events';
+        if (key === 'tours') return post.category?.name === 'Tours';
+        if (key === 'notices') return post.category?.name === 'Notices';
+        if (key === 'offers') return post.category?.name === 'Offers & Benefits';
+        if (key === 'temple-updates') return post.category?.name === 'Temple Updates';
+        if (key === 'videos') return post.category?.name === 'Videos';
+        if (key === 'photos') return post.category?.name === 'Photos';
+        return false;
+      });
+    });
+  }
 
   const ranked = candidates
     .map((post) => ({ post, rank: rankPost(post, ctx) }))
@@ -171,7 +270,17 @@ export async function getSmartFeed(memberId: string, page: number, pageSize: num
   const start = (page - 1) * pageSize;
   const pageRows = ranked.slice(start, start + pageSize).map((r) => r.post);
 
-  // Ads in feed (§5.13): top banner + in-feed after every 3 posts, Super Admin-managed
+  // Auto track analytics: increment view counts for these posts asynchronously
+  if (pageRows.length > 0) {
+    prisma.feedPost
+      .updateMany({
+        where: { id: { in: pageRows.map((r) => r.id) } },
+        data: { viewCount: { increment: 1 } },
+      })
+      .catch((err) => console.error('Failed to update feed post view counts:', err));
+  }
+
+  // Ads in feed (§5.13): top banner + in-feed after every 7 posts
   const ads = await getActiveAdsForMember(ctx);
   const topBanner = ads.find((a) => a.slot === 'TOP_BANNER') ?? null;
   const inFeedAds = ads.filter((a) => a.slot === 'IN_FEED');
@@ -180,7 +289,7 @@ export async function getSmartFeed(memberId: string, page: number, pageSize: num
   let adIndex = 0;
   pageRows.forEach((post, i) => {
     items.push({ kind: 'POST', post });
-    if ((i + 1) % 3 === 0 && inFeedAds.length > 0) {
+    if ((i + 1) % 7 === 0 && inFeedAds.length > 0) {
       items.push({ kind: 'AD', ad: inFeedAds[adIndex % inFeedAds.length] });
       adIndex += 1;
     }

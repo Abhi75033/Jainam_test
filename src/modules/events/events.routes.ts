@@ -46,6 +46,7 @@ eventRoutes.post('/:eventId/rsvp/cancel', requireAuth, eventsController.cancelRs
 eventRoutes.post('/:eventId/gallery', requireAuth, requirePermission('GALLERY', 'CREATE'), validate(addGalleryImagesSchema), eventsController.addGalleryImages);
 eventRoutes.post('/:eventId/video-links', requireAuth, requirePermission('GALLERY', 'CREATE'), validate(addVideoLinkSchema), eventsController.addVideoLink);
 eventRoutes.post('/:eventId/feedback', requireAuth, validate(eventFeedbackSchema), eventsController.submitFeedback);
+eventRoutes.get('/:eventId/feedback', requireAuth, requirePermission('EVENTS', 'VIEW'), eventsController.listFeedback);
 
 // Dashboards
 eventRoutes.get('/dashboard/org/:organizationId', requireAuth, requirePermission('DASHBOARD', 'VIEW'), scopeToOrganization, eventsController.orgDashboard);

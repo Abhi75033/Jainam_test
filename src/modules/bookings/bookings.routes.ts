@@ -41,3 +41,7 @@ bookingRoutes.post('/:bookingId/payment-verification', requireAuth, requirePermi
 // Org occupancy / admin listing (+ export variant per §7)
 bookingRoutes.get('/org/:organizationId', requireAuth, requirePermission('BOOKINGS', 'VIEW'), scopeToOrganization, bookingsController.orgBookings);
 bookingRoutes.get('/org/:organizationId/export', requireAuth, requirePermission('BOOKINGS', 'VIEW'), scopeToOrganization, bookingsController.orgBookingsExport);
+
+// Booking Calendar — aggregated view by month for calendar page
+bookingRoutes.get('/calendar', requireAuth, requirePermission('BOOKINGS', 'VIEW'), bookingsController.bookingCalendar);
+

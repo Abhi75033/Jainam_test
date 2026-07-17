@@ -20,7 +20,7 @@ export async function createOrganization(input: Record<string, unknown> & { type
 
   const publicId = await prisma.$transaction((tx) => nextPublicId(PREFIX_BY_TYPE[type as OrganizationType], tx));
 
-  return prisma.organization.create({
+  const org = await prisma.organization.create({
     data: {
       publicId,
       type,
@@ -31,11 +31,46 @@ export async function createOrganization(input: Record<string, unknown> & { type
       updatedById: createdById,
     },
   });
+
+  try {
+    const { createAutoFeedCard } = await import('@/modules/feed/feed.service');
+    const catName = org.type === 'TEMPLE' ? 'Temple Updates' : org.type === 'JAIN_CENTER' ? 'Jain Centre Updates' : 'Dharamshala Updates';
+    const categoryRow = await prisma.feedCategory.findUnique({ where: { name: catName } });
+    
+    const visibilityConfig = {
+      isPublic: false,
+      community: {
+        communityIds: org.communityId ? [org.communityId] : [],
+        subCommunityIds: org.subCommunityId ? [org.subCommunityId] : [],
+        gacchaId: org.gacchaId ? [org.gacchaId] : []
+      },
+      geo: {
+        city: org.city || undefined,
+        state: org.state || undefined,
+        country: org.country || undefined
+      }
+    };
+
+    await createAutoFeedCard({
+      sourceModule: org.type === 'TEMPLE' ? 'TEMPLES' : org.type === 'JAIN_CENTER' ? 'JAIN_CENTERS' : 'DHARAMSHALAS',
+      sourceId: org.id,
+      organizationId: org.id,
+      title: `${org.name} Registered`,
+      description: `${org.name} is now registered on JiNANAM. View details for timings, facilities, and contact details.`,
+      coverUrl: org.logoUrl || undefined,
+      visibilityConfig,
+      categoryId: categoryRow?.id,
+    });
+  } catch (err) {
+    console.error('Failed to create auto feed card for organization registration:', err);
+  }
+
+  return org;
 }
 
 export async function updateOrganization(organizationId: string, input: Record<string, unknown>, updatedById: string) {
   const { bankAccount, ...rest } = input as any;
-  return prisma.organization.update({
+  const org = await prisma.organization.update({
     where: { id: organizationId },
     data: {
       ...rest,
@@ -45,6 +80,41 @@ export async function updateOrganization(organizationId: string, input: Record<s
       updatedAt: new Date(),
     },
   });
+
+  try {
+    const { createAutoFeedCard } = await import('@/modules/feed/feed.service');
+    const catName = org.type === 'TEMPLE' ? 'Temple Updates' : org.type === 'JAIN_CENTER' ? 'Jain Centre Updates' : 'Dharamshala Updates';
+    const categoryRow = await prisma.feedCategory.findUnique({ where: { name: catName } });
+    
+    const visibilityConfig = {
+      isPublic: false,
+      community: {
+        communityIds: org.communityId ? [org.communityId] : [],
+        subCommunityIds: org.subCommunityId ? [org.subCommunityId] : [],
+        gacchaId: org.gacchaId ? [org.gacchaId] : []
+      },
+      geo: {
+        city: org.city || undefined,
+        state: org.state || undefined,
+        country: org.country || undefined
+      }
+    };
+
+    await createAutoFeedCard({
+      sourceModule: org.type === 'TEMPLE' ? 'TEMPLES' : org.type === 'JAIN_CENTER' ? 'JAIN_CENTERS' : 'DHARAMSHALAS',
+      sourceId: org.id,
+      organizationId: org.id,
+      title: `${org.name} Details Updated`,
+      description: `${org.name} profile details have been updated recently.`,
+      coverUrl: org.logoUrl || undefined,
+      visibilityConfig,
+      categoryId: categoryRow?.id,
+    });
+  } catch (err) {
+    console.error('Failed to create auto feed card for organization update:', err);
+  }
+
+  return org;
 }
 
 export async function getOrganization(organizationId: string) {
@@ -87,7 +157,45 @@ export async function addGalleryImage(organizationId: string, imageUrl: string, 
   const count = await prisma.organizationGalleryImage.count({ where: { organizationId } });
   const max = orgType === 'DHARAMSHALA' ? MAX_DHARAMSHALA_GALLERY_IMAGES : MAX_TEMPLE_GALLERY_IMAGES;
   if (count >= max) throw ApiError.validation({ gallery: [`Maximum ${max} images allowed`] });
-  return prisma.organizationGalleryImage.create({ data: { organizationId, imageUrl, order } });
+  
+  const galleryImage = await prisma.organizationGalleryImage.create({ data: { organizationId, imageUrl, order } });
+
+  try {
+    const org = await prisma.organization.findUnique({ where: { id: organizationId } });
+    if (org) {
+      const { createAutoFeedCard } = await import('@/modules/feed/feed.service');
+      const categoryRow = await prisma.feedCategory.findUnique({ where: { name: 'Photos' } });
+
+      const visibilityConfig = {
+        isPublic: false,
+        community: {
+          communityIds: org.communityId ? [org.communityId] : [],
+          subCommunityIds: org.subCommunityId ? [org.subCommunityId] : [],
+          gacchaId: org.gacchaId ? [org.gacchaId] : []
+        },
+        geo: {
+          city: org.city || undefined,
+          state: org.state || undefined,
+          country: org.country || undefined
+        }
+      };
+
+      await createAutoFeedCard({
+        sourceModule: 'GALLERY',
+        sourceId: galleryImage.id,
+        organizationId,
+        title: `New Photo added to ${org.name}`,
+        description: `A new exterior/interior photo has been uploaded to the ${org.name} gallery.`,
+        coverUrl: imageUrl,
+        visibilityConfig,
+        categoryId: categoryRow?.id,
+      });
+    }
+  } catch (err) {
+    console.error('Failed to create auto feed card for gallery image:', err);
+  }
+
+  return galleryImage;
 }
 
 export async function addTrustee(organizationId: string, memberId: string, designation: string) {
@@ -104,6 +212,14 @@ export async function addVolunteer(organizationId: string, memberId: string, are
     update: {},
     create: { memberId, badge: 'VOLUNTEER' },
   });
+  // Trigger realtime stats broadcast
+  try {
+    const { broadcastDashboardUpdate } = require('../dashboard/dashboard.service');
+    broadcastDashboardUpdate(organizationId);
+  } catch (err) {
+    // ignore
+  }
+
   return volunteer;
 }
 

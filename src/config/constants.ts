@@ -27,6 +27,7 @@ export const ID_PREFIXES = {
   DEVICE: 'JFDV',
   OFFER: 'JFOF',
   NEWS: 'JFNW',
+  MONK_GROUP: 'JFMSV',
 } as const;
 
 export type IdPrefixKey = keyof typeof ID_PREFIXES;

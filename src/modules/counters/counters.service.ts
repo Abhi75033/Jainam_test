@@ -85,13 +85,27 @@ export async function orgMemberCounters(organizationId: string, from?: Date, to?
 }
 
 /** Leaderboards per counter + overall (§5.18). */
-export async function leaderboard(counterTypeId?: string, limit = 20) {
+export async function leaderboard(filters: { counterTypeId?: string; scope?: 'top' | 'today'; limit?: number }) {
+  const limit = filters.limit ?? 20;
+
+  const where: any = {};
+  if (filters.counterTypeId) {
+    where.counterTypeId = filters.counterTypeId;
+  }
+
+  if (filters.scope === 'today') {
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    where.updatedAt = { gte: startOfToday };
+  }
+
   const counters = await prisma.memberCounter.findMany({
-    where: { counterTypeId },
+    where,
     include: { member: { select: { publicId: true, fullName: true, photoUrl: true } }, counterType: true },
     orderBy: { count: 'desc' },
     take: limit,
   });
+
   return counters.map((c, i) => ({
     rank: i + 1,
     member: c.member,
@@ -99,3 +113,97 @@ export async function leaderboard(counterTypeId?: string, limit = 20) {
     count: c.count.toString(),
   }));
 }
+
+
+/** Admin overview statistics for spiritual counting dashboard. */
+export async function adminOverview() {
+  const counterTypes = await prisma.counterType.findMany({
+    where: { deletedAt: null },
+    include: {
+      memberCounters: {
+        select: {
+          count: true,
+          memberId: true,
+          updatedAt: true,
+        },
+      },
+    },
+  });
+
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+  return counterTypes.map((ct) => {
+    let countSum = 0n;
+    const uniqueMembers = new Set<string>();
+    let todaySum = 0n;
+
+    for (const mc of ct.memberCounters) {
+      countSum += mc.count;
+      uniqueMembers.add(mc.memberId);
+      if (mc.updatedAt >= startOfToday) {
+        todaySum += mc.count;
+      }
+    }
+
+    return {
+      id: ct.id,
+      name: ct.name,
+      count: Number(countSum),
+      memberCount: uniqueMembers.size,
+      todayCount: Number(todaySum),
+    };
+  });
+}
+
+/** Create a new counter type. */
+export async function createCounterType(name: string) {
+  const existing = await prisma.counterType.findFirst({
+    where: { name, deletedAt: null },
+  });
+  if (existing) throw ApiError.conflict('Counter type with this name already exists.');
+
+  return prisma.counterType.create({
+    data: { name },
+  });
+}
+
+/** Delete a counter type. */
+export async function deleteCounterType(id: string) {
+  const existing = await prisma.counterType.findUnique({
+    where: { id },
+  });
+  if (!existing || existing.deletedAt) throw ApiError.notFound('Counter type not found.');
+
+  return prisma.counterType.update({
+    where: { id },
+    data: { deletedAt: new Date() },
+  });
+}
+
+/** Reset all member counts for a specific counter type. */
+export async function resetCounterType(counterTypeId: string) {
+  const existing = await prisma.counterType.findUnique({
+    where: { id: counterTypeId },
+  });
+  if (!existing || existing.deletedAt) throw ApiError.notFound('Counter type not found.');
+
+  const counters = await prisma.memberCounter.findMany({
+    where: { counterTypeId },
+  });
+
+  for (const counter of counters) {
+    await prisma.counterResetLog.create({
+      data: { memberCounterId: counter.id, previousCount: counter.count },
+    });
+  }
+
+  await prisma.memberCounter.updateMany({
+    where: { counterTypeId },
+    data: { count: 0n },
+  });
+
+  return { resetCount: counters.length };
+}
+
+

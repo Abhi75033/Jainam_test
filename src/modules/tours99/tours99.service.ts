@@ -288,6 +288,42 @@ export async function enterDailyJatraCount(participantId: string, date: Date, co
   return { ...result.row, progressPct: Math.min(pct, 100) };
 }
 
+/** Milestone/progress summary consumed by the admin panel's jatra page. */
+export async function participantMilestoneProgress(participantId: string) {
+  const participant = await prisma.tourParticipant.findUnique({
+    where: { id: participantId },
+    include: { tour: { select: { jatraTarget: true, name: true } } },
+  });
+  if (!participant) throw ApiError.notFound('Participant not found');
+
+  const [agg, milestones, dailyCounts] = await Promise.all([
+    prisma.tourDailyJatraCount.aggregate({ where: { participantId }, _sum: { count: true } }),
+    prisma.tourMilestone.findMany({ where: { participantId }, orderBy: { milestonePct: 'asc' } }),
+    prisma.tourDailyJatraCount.findMany({ where: { participantId }, orderBy: { date: 'desc' }, take: 30 }),
+  ]);
+
+  const completed = agg._sum.count ?? 0;
+  const target = participant.tour.jatraTarget;
+  const certificate = milestones.find((m) => m.milestonePct === 100)?.certificateUrl ?? null;
+  return {
+    target,
+    completed,
+    progressPercent: Math.min(Math.floor((completed / target) * 100), 100),
+    milestones,
+    certificateUrl: certificate,
+    dailyCounts,
+  };
+}
+
+/** Resolve the certificate URL for a participant; 404s until generated. */
+export async function participantCertificateUrl(participantId: string) {
+  const milestone = await prisma.tourMilestone.findUnique({
+    where: { participantId_milestonePct: { participantId, milestonePct: 100 } },
+  });
+  if (!milestone?.certificateUrl) throw ApiError.notFound('Certificate not generated yet — participant must reach the jatra target first');
+  return milestone.certificateUrl;
+}
+
 /** Digital certificate (PDF + QR) generation — runs in the tour-milestones queue. */
 export async function generateTourCertificate(participantId: string) {
   const participant = await prisma.tourParticipant.findUnique({

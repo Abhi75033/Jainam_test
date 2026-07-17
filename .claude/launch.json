@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "admin-frontend",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-c", "cd /Users/abhishekkumar/Downloads/jaincommunity000123455-main/frontend && BROWSER=none npx craco start"],
+      "port": 3000
+    }
+  ]
+}

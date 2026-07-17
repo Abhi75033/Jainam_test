@@ -86,9 +86,16 @@ interface RegisterMemberInput {
   interests?: string[];
 }
 
+const ADMIN_ROLES = ['SUPER_ADMIN', 'TEMPLE_ADMIN', 'DHARAMSHALA_ADMIN', 'JAIN_CENTER_ADMIN', 'MONK_ADMIN'];
+
 export async function registerMember(input: RegisterMemberInput) {
   const user = await prisma.user.findUniqueOrThrow({ where: { id: input.userId } });
   if (user.publicId) throw ApiError.conflict('Profile already exists for this account');
+  // Self-registration must never overwrite an admin account's role (admins
+  // registering members must use POST /members/admin-create instead)
+  if (ADMIN_ROLES.includes(user.primaryRoleKey)) {
+    throw ApiError.conflict('Admin accounts cannot self-register as members — use the admin member-creation flow');
+  }
 
   if (input.category === 'JAIN' && !input.communityId) {
     throw ApiError.validation({ communityId: ['Community is required for Jain members'] });

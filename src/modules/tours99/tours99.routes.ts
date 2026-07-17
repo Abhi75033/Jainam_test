@@ -129,6 +129,12 @@ tourRoutes.get('/:tourId/participants', requireAuth, requirePermission('TOURS', 
   })));
 }));
 
+tourRoutes.delete('/participants/:participantId', requireAuth, requirePermission('TOURS', 'EDIT'), asyncHandler(async (req: Request, res: Response) => {
+  const { prisma } = await import('@/config/prisma');
+  await prisma.tourParticipant.delete({ where: { id: req.params.participantId } });
+  return ok(res, { deleted: true });
+}));
+
 // Medical forms visible ONLY to tour admin + Super Admin (§5.19) — guarded by TOURS:VIEW permission
 tourRoutes.get('/participants/:participantId', requireAuth, requirePermission('TOURS', 'VIEW'), asyncHandler(async (req: Request, res: Response) => {
   const participant = await toursService.getParticipantProfile(req.params.participantId as string);
@@ -171,6 +177,27 @@ tourRoutes.get('/:tourId/accommodation/occupancy', requireAuth, requirePermissio
 tourRoutes.post('/participants/:participantId/jatra-counts', requireAuth, requirePermission('TOURS', 'EDIT'), validate(jatraCountSchema), asyncHandler(async (req: Request, res: Response) => {
   const row = await toursService.enterDailyJatraCount(req.params.participantId as string, req.body.date, req.body.count, req.actor!.userId);
   return ok(res, row);
+}));
+
+// Admin-panel alias of jatra-counts (tour-scoped URL)
+tourRoutes.post('/:tourId/participants/:participantId/jatra', requireAuth, requirePermission('TOURS', 'EDIT'), validate(jatraCountSchema), asyncHandler(async (req: Request, res: Response) => {
+  const row = await toursService.enterDailyJatraCount(req.params.participantId as string, req.body.date, req.body.count, req.actor!.userId);
+  return ok(res, row);
+}));
+
+// Milestone progress summary for a participant (§5.19)
+tourRoutes.get('/:tourId/participants/:participantId/milestones', requireAuth, requirePermission('TOURS', 'VIEW'), asyncHandler(async (req: Request, res: Response) => {
+  const progress = await toursService.participantMilestoneProgress(req.params.participantId as string);
+  return ok(res, progress);
+}));
+
+// Certificate download (PDF generated on hitting the jatra target)
+tourRoutes.get('/:tourId/participants/:participantId/certificate', requireAuth, asyncHandler(async (req: Request, res: Response) => {
+  let url = await toursService.participantCertificateUrl(req.params.participantId as string);
+  if (url.includes('localhost:4000')) {
+    url = url.replace('localhost:4000', req.get('host') || 'localhost:8000');
+  }
+  return res.redirect(url);
 }));
 
 tourRoutes.post('/participants/:participantId/attendance', requireAuth, requirePermission('TOURS', 'EDIT'), validate(attendanceSchema), asyncHandler(async (req: Request, res: Response) => {

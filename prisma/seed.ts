@@ -170,10 +170,147 @@ function buildGacchaList(): string[] {
 }
 
 const TIRTHANKARAS = [
-  'Rushabhdev', 'Ajitnath', 'Sambhavnath', 'Abhinandan Swami', 'Sumatinath', 'Padmaprabhu',
-  'Suparshvanath', 'Chandraprabhu', 'Suvidhinath', 'Shitalnath', 'Shreyansanath', 'Vasupujya',
-  'Vimalnath', 'Anantnath', 'Dharmanath', 'Kunthunath', 'Aranath', 'Mallinath',
-  'Munisuvrat Swami', 'Naminath', 'Neminath', 'Parshvanath', 'Mahavir Swami',
+  "Rishabhdev /or Adinath Bhagwan",
+  "Ajitnath Bhagwan",
+  "Sambhavnath Bhagwan",
+  "Abhinandannath Bhagwan",
+  "Sumatinath Bhagwan",
+  "Padmaprabh Bhagwan",
+  "Suparshawanath Bhagwan",
+  "Chandraprabh Bhagwan",
+  "Pushpdant Bhagwan",
+  "Sheetalnath Bhagwan",
+  "Shriyansnath Bhagwan",
+  "Vaasupujya Bhagwan",
+  "Vimalnath Bhagwan",
+  "Anantnath Bhagwan",
+  "Dharamnath Bhagwan",
+  "Shantinath Bhagwan",
+  "Kunthunath Bhagwan",
+  "Arahnath Bhagwan",
+  "Mallinath Bhagwan",
+  "MuniSuvratnath Bhagwan",
+  "Naminath Bhagwan",
+  "Neminath Bhagwan",
+  "Parshwanath Bhagwan",
+  "Mahavir Swami Bhagwan"
+];
+
+const OTHERS = [
+  "Nakoda Bhairav",
+  "Bhomiyaji Maharaj",
+  "Naigamesha",
+  "Kshetrapal Dada",
+  "Manibhadra Veer",
+  "Ghantakarna Mahavir Bhagwan",
+  "Shri Ajhara Parshvanath",
+  "Shri Mahadeva Parshvanath",
+  "Shri Alokik Parshvanath",
+  "Shri Makshi Parshvanath",
+  "Shri Amijhara Parshvanath",
+  "Shri Mandovara Parshvanath",
+  "Shri Amrutjhara Parshvanath",
+  "Shri Manoranjan Parshvanath",
+  "Shri Ananda Parshvanath",
+  "Shri Manovanchit Parshvanath",
+  "Shri Antariksh Parshvanath",
+  "Shri Muhri Parshvanath",
+  "Shri Ashapuran Parshvanath",
+  "Shri Muleva Parshvanath",
+  "Shri Avanti Parshvanath",
+  "Shri Nageshvar Parshvanath",
+  "Shri Bareja Parshvanath",
+  "Shri Nagphana Parshvanath",
+  "Shri Bhabha Parshvanath",
+  "Shri Navasari Parshvanath",
+  "Shri Bhadreshvar Parshvanath",
+  "Shri Nakoda Parshvanath",
+  "Shri Bhateva Parshvanath",
+  "Shri Navapallav Parshvanath",
+  "Shri Bhayabhanjan Parshvanath",
+  "Shri Navkhanda Parshvanath",
+  "Shri Bhidbhanjan Parshvanath",
+  "Shri Navlakha Parshvanath",
+  "Shri Bhiladiya Parshvanath",
+  "Shri Padmavati Parshvanath",
+  "Shri Bhuvan Parshvanath",
+  "Shri Pallaviya Parshvanath",
+  "Shri Champa Parshvanath",
+  "Shri Panchasara Parshvanath",
+  "Shri Chanda Parshvanath",
+  "Shri Phalvridhi Parshvanath",
+  "Shri Charup Parshvanath",
+  "Shri Posali Parshvanath",
+  "Shri Chintamani Parshvanath",
+  "Shri Posina Parshvanath",
+  "Shri Chorvadi Parshvanath",
+  "Shri Pragatprabhavi Parshvanath",
+  "Shri Dada Parshvanath",
+  "Shri Ranakpura Parshvanath",
+  "Shri Dharnendra Parshvanath",
+  "Shri Ravana Parshvanath",
+  "Shri Dhingadmalla Parshvanath",
+  "Shri Shankhala Parshvanath",
+  "Shri Dhiya Parshvanath",
+  "Shri Stambhan Parshvanath",
+  "Shri Dhrutkallol Parshvanath",
+  "Shri Sahastraphana Parshvanath",
+  "Shri Dokadiya Parshvanath",
+  "Shri Samina Parshvanath",
+  "Shri Dosala Parshvanath",
+  "Shri Sammetshikhar Parshvanath",
+  "Shri Dudhyadhari Parshvanath",
+  "Shri Sankatharan Parshvanath",
+  "Shri Gadaliya Parshvanath",
+  "Shri Saptaphana Parshvanath",
+  "Shri Gambhira Parshvanath",
+  "Shri Savara Parshvanath",
+  "Shri Girua Parshvanath",
+  "Shri Serisha Parshvanath",
+  "Shri Godi Parshvanath",
+  "Shri Sesali Parshvanath",
+  "Shri Hamirpura Parshvanath",
+  "Shri Shamala Parshvanath",
+  "Shri Hrinkar Parshvanath",
+  "Shri Shankeshver Parshvanath",
+  "Shri Jiravala Parshvanath",
+  "Shri Sirodiya Parshvanath",
+  "Shri Jotingada Parshvanath",
+  "Shri Sogatiya Parshvanath",
+  "Shri Jagavallabh Parshvanath",
+  "Shri Somchintamani Parshvanath",
+  "Shri Kesariya Parshvanath",
+  "Shri Sphuling Parshvanath",
+  "Shri Kachulika Parshvanath",
+  "Shri Sukhsagar Parshvanath",
+  "Shri Kalhara Parshvanath",
+  "Shri Sultan Parshvanath",
+  "Shri Kalikund Parshvanath",
+  "Shri Surajmandan Parshvanath",
+  "Shri Kalpadhrum Parshvanath",
+  "Shri Svayambhu Parshvanath",
+  "Shri Kalyan Parshvanath",
+  "Shri Tankala Parshvanath",
+  "Shri Kamitpuran Parshvanath",
+  "Shri Uvasaggaharam Parshvanath",
+  "Shri Kankan Parshvanath",
+  "Shri Vadi Parshvanath",
+  "Shri Kansari Parshvanath",
+  "Shri Vahi Parshvanath",
+  "Shri Kareda Parshvanath",
+  "Shri Vanchara Parshvanath",
+  "Shri Koka Parshvanath",
+  "Shri Varanasi Parshvanath",
+  "Shri Kukadeshvar Parshvanath",
+  "Shri Varkana Parshvanath",
+  "Shri Kunkumarol Parshvanath",
+  "Shri Vighnapahar Parshvanath",
+  "Shri Lodhan Parshvanath",
+  "Shri Vignahara Parshvanath",
+  "Shri Lodrava Parshvanath",
+  "Shri Vijaychintamani Parshvanath",
+  "Shri Manmohan Parshvanath",
+  "Shri Vimal Parshvanath"
 ];
 
 async function seedMasterData() {
@@ -212,7 +349,19 @@ async function seedMasterData() {
   await upsertByName(prisma.tithiCalendarType as any, ['Gujarati', 'Kutchi', 'Marwari', 'Hindi', 'Marathi', 'Other']);
 
   for (const name of TIRTHANKARAS) {
-    await prisma.bhagwanMaster.upsert({ where: { name }, update: {}, create: { name } });
+    await prisma.bhagwanMaster.upsert({
+      where: { name },
+      update: { category: "24 Tirthankars" },
+      create: { name, category: "24 Tirthankars" }
+    });
+  }
+
+  for (const name of OTHERS) {
+    await prisma.bhagwanMaster.upsert({
+      where: { name },
+      update: { category: "Others" },
+      create: { name, category: "Others" }
+    });
   }
 
   await upsertByName(prisma.bookingCategory as any, [
@@ -224,7 +373,11 @@ async function seedMasterData() {
     'Satsang', 'Pravachan', 'Pooja/Ritual', 'Utsav/Festival', 'Yatra', 'Cultural', 'Educational', 'Other',
   ]);
 
-  await upsertByName(prisma.feedCategory as any, ['Announcement', 'Update', 'Achievement', 'General']);
+  await upsertByName(prisma.feedCategory as any, [
+    'Temple Updates', 'Jain Centre Updates', 'Monk Updates', 'Dharamshala Updates',
+    'Events', 'Tours', 'Notices', 'Spiritual Articles', 'Photos', 'Videos',
+    'Offers & Benefits', 'JiNANAM Announcements', 'Other'
+  ]);
 
   await upsertByName(prisma.offerCategory as any, ['Food', 'Retail', 'Travel', 'Wellness', 'Education', 'Other']);
 
@@ -449,7 +602,6 @@ async function main() {
   await seedRolesAndPermissions();
   await seedMasterData();
   await seedSuperAdmin();
-  await seedDemoData();
 }
 
 main()

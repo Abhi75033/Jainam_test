@@ -150,3 +150,61 @@ export const orgBookingsExport = asyncHandler(async (req: Request, res: Response
     ],
   );
 });
+
+// Booking calendar — return bookings grouped by day for a month
+export const bookingCalendar = asyncHandler(async (req: Request, res: Response) => {
+  const { month, year, organizationId } = req.query as Record<string, string>;
+
+  const m = parseInt(month ?? String(new Date().getMonth() + 1));
+  const y = parseInt(year ?? String(new Date().getFullYear()));
+
+  const from = new Date(y, m - 1, 1);
+  const to = new Date(y, m, 0, 23, 59, 59); // last day of month
+
+  const orgId = req.actor!.isSuperAdmin
+    ? (organizationId as string | undefined)
+    : req.actor!.organizationIds[0] ?? undefined;
+
+
+  const bookings = await prisma.booking.findMany({
+    where: {
+      organizationId: orgId,
+      dateFrom: { gte: from, lte: to },
+      status: { in: ['SUBMITTED', 'APPROVED', 'PAYMENT_PENDING', 'PAYMENT_VERIFICATION', 'CONFIRMED'] },
+
+    },
+    include: {
+      bookingItem: { select: { name: true, type: true } },
+      member: { select: { fullName: true, publicId: true } },
+    },
+    orderBy: { dateFrom: 'asc' },
+    take: 1000,
+  });
+
+  // Group by day of month
+  const byDay: Record<number, typeof bookings> = {};
+  for (const b of bookings) {
+    const day = b.dateFrom.getDate();
+    if (!byDay[day]) byDay[day] = [];
+    byDay[day].push(b);
+  }
+
+  return ok(res, {
+    month: m,
+    year: y,
+    totalBookings: bookings.length,
+    byDay,
+    bookings: bookings.map((b) => ({
+      id: b.id,
+      publicId: b.publicId,
+      date: b.dateFrom.getDate(),
+      dateFrom: b.dateFrom.toISOString(),
+      dateTo: b.dateTo?.toISOString(),
+      type: b.bookingItem.type,
+      name: b.member.fullName,
+      publicIdMember: b.member.publicId,
+      item: b.bookingItem.name,
+      status: b.status,
+    })),
+  });
+});

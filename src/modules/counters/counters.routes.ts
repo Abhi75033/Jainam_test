@@ -61,6 +61,53 @@ counterRoutes.get('/org/:organizationId', requireAuth, requirePermission('COUNTE
 }));
 
 counterRoutes.get('/leaderboard', requireAuth, asyncHandler(async (req: Request, res: Response) => {
-  const rows = await countersService.leaderboard(req.query.counterTypeId as string | undefined);
+  const { counterTypeId, scope } = req.query as { counterTypeId?: string; scope?: 'top' | 'today' };
+  const rows = await countersService.leaderboard({ counterTypeId, scope });
   return ok(res, rows);
 }));
+
+
+// ─── ADMIN DASHBOARD ENDPOINTS ───────────────────────────────────────────────
+
+// Get admin dashboard stats and counter types list
+counterRoutes.get('/admin/overview', requireAuth, requirePermission('COUNTERS', 'VIEW'), asyncHandler(async (req: Request, res: Response) => {
+  const overview = await countersService.adminOverview();
+  return ok(res, overview);
+}));
+
+// Add a counter type
+counterRoutes.post(
+  '/types',
+  requireAuth,
+  requirePermission('COUNTERS', 'CREATE'),
+  validate(z.object({ body: z.object({ name: z.string().min(1) }) })),
+  asyncHandler(async (req: Request, res: Response) => {
+    const row = await countersService.createCounterType(req.body.name);
+    return ok(res, row);
+  }),
+);
+
+// Delete a counter type
+counterRoutes.delete(
+  '/types/:id',
+  requireAuth,
+  requirePermission('COUNTERS', 'DELETE'),
+  asyncHandler(async (req: Request, res: Response) => {
+    const row = await countersService.deleteCounterType(req.params.id as string);
+
+    return ok(res, row);
+  }),
+);
+
+// Reset a counter type (all members' counts under this type become zero)
+counterRoutes.post(
+  '/types/:id/reset',
+  requireAuth,
+  requirePermission('COUNTERS', 'EDIT'),
+  asyncHandler(async (req: Request, res: Response) => {
+    const result = await countersService.resetCounterType(req.params.id as string);
+    return ok(res, result);
+  }),
+);
+
+

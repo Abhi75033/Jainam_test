@@ -53,7 +53,15 @@ export const createAdminAccountSchema = z.object({
     firstName: z.string().min(1),
     lastName: z.string().optional(),
     role: z.enum(['TEMPLE_ADMIN', 'DHARAMSHALA_ADMIN', 'JAIN_CENTER_ADMIN', 'MONK_ADMIN']),
-    organizationIds: z.array(z.string()).min(1),
+    organizationIds: z.array(z.string()),
+  }).superRefine((val, ctx) => {
+    if (val.role !== 'MONK_ADMIN' && (!val.organizationIds || val.organizationIds.length === 0)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['organizationIds'],
+        message: 'At least one organization scope is required for this role',
+      });
+    }
   }),
 });
 

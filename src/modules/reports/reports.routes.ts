@@ -275,3 +275,149 @@ reportRoutes.get(
     return res.send(buffer);
   }),
 );
+
+// ─── SUMMARY ENDPOINTS FOR CHART DASHBOARDS ───────────────────────────────────
+
+/** Member enrollment summary — group by city/state with Jain vs Non-Jain split */
+reportRoutes.get(
+  '/summary/members/org/:organizationId',
+  requireAuth,
+  requirePermission('REPORTS', 'VIEW'),
+  scopeToOrganization,
+  asyncHandler(async (req: Request, res: Response) => {
+    const { from, to } = req.query as { from?: string; to?: string };
+    const dateFilter = {
+      gte: from ? new Date(from) : new Date(new Date().setFullYear(new Date().getFullYear() - 1)),
+      lte: to ? new Date(to) : new Date(),
+    };
+
+    const members = await prisma.member.findMany({
+      where: { createdAt: dateFilter, deletedAt: null },
+      select: { currentAddress: true, category: true, status: true, createdAt: true },
+      take: 10000,
+    });
+
+    // Group by city (extracted from currentAddress JSON)
+    const cityMap: Record<string, { Jain: number; NonJain: number }> = {};
+    for (const m of members) {
+      const addr = m.currentAddress as Record<string, string> | null;
+      const city = addr?.city || addr?.state || 'Other';
+      if (!cityMap[city]) cityMap[city] = { Jain: 0, NonJain: 0 };
+      if (m.category === 'NON_JAIN') cityMap[city].NonJain++;
+      else cityMap[city].Jain++;
+    }
+
+    const chartData = Object.entries(cityMap)
+      .map(([name, counts]) => ({ name, ...counts }))
+      .sort((a, b) => (b.Jain + b.NonJain) - (a.Jain + a.NonJain))
+      .slice(0, 10);
+
+    const totalJain = members.filter((m) => m.category !== 'NON_JAIN').length;
+    const totalNonJain = members.filter((m) => m.category === 'NON_JAIN').length;
+    const active = members.filter((m) => m.status === 'ACTIVE').length;
+
+    return ok(res, {
+      totalJain,
+      totalNonJain,
+      total: members.length,
+      activePercent: members.length > 0 ? Math.round((active / members.length) * 100) : 0,
+      chartData,
+    });
+  }),
+);
+
+/** Donation trends by month — split by flow type (PLATFORM_ONLINE vs ORG_MANUAL) */
+reportRoutes.get(
+  '/summary/donations/org/:organizationId',
+  requireAuth,
+  requirePermission('REPORTS', 'VIEW'),
+  scopeToOrganization,
+  asyncHandler(async (req: Request, res: Response) => {
+    const now = new Date();
+    const from = new Date(now.getFullYear(), now.getMonth() - 5, 1); // last 6 months
+    const to = new Date();
+
+    const donations = await prisma.donation.findMany({
+      where: {
+        organizationId: req.params.organizationId,
+        createdAt: { gte: from, lte: to },
+        status: 'VERIFIED',
+      },
+      select: { totalAmount: true, flowType: true, createdAt: true },
+      take: 50000,
+    });
+
+    // Group by month
+    const monthMap: Record<string, { Online: number; Offline: number }> = {};
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    for (const d of donations) {
+      const key = monthNames[d.createdAt.getMonth()] ?? 'Unknown';
+      if (!monthMap[key]) monthMap[key] = { Online: 0, Offline: 0 };
+      const amount = Number(d.totalAmount);
+      if (d.flowType === 'ORG_MANUAL') monthMap[key]!.Offline += amount;
+      else monthMap[key]!.Online += amount;
+    }
+
+    const chartData = Object.entries(monthMap).map(([name, vals]) => ({ name, ...vals }));
+
+    const totalOnline = donations
+      .filter((d) => d.flowType !== 'ORG_MANUAL')
+      .reduce((s, d) => s + Number(d.totalAmount), 0);
+    const totalOffline = donations
+      .filter((d) => d.flowType === 'ORG_MANUAL')
+      .reduce((s, d) => s + Number(d.totalAmount), 0);
+
+    return ok(res, {
+      totalOnline,
+      totalOffline,
+      total: totalOnline + totalOffline,
+      chartData,
+    });
+  }),
+);
+
+
+/** Event attendance summary — RSVP vs actual check-in */
+reportRoutes.get(
+  '/summary/events/org/:organizationId',
+  requireAuth,
+  requirePermission('REPORTS', 'VIEW'),
+  scopeToOrganization,
+  asyncHandler(async (req: Request, res: Response) => {
+    const { from, to } = req.query as { from?: string; to?: string };
+    const dateFilter = {
+      gte: from ? new Date(from) : new Date(new Date().setFullYear(new Date().getFullYear() - 1)),
+      lte: to ? new Date(to) : new Date(),
+    };
+
+    const events = await prisma.event.findMany({
+      where: {
+        organizationId: req.params.organizationId,
+        startAt: dateFilter,
+        deletedAt: null,
+      },
+      include: {
+        _count: { select: { rsvps: true, tickets: true } },
+      },
+      orderBy: { startAt: 'desc' },
+      take: 100,
+    });
+
+    const chartData = events.slice(0, 10).map((e) => ({
+      name: e.title.slice(0, 20),
+      RSVPs: e._count.rsvps,
+      Checkins: e._count.tickets,
+    }));
+
+    const totalRsvps = events.reduce((s, e) => s + e._count.rsvps, 0);
+    const totalCheckins = events.reduce((s, e) => s + e._count.tickets, 0);
+
+    return ok(res, {
+      totalEvents: events.length,
+      totalRsvps,
+      totalCheckins,
+      avgOccupancy: totalRsvps > 0 ? Math.round((totalCheckins / totalRsvps) * 100) : 0,
+      chartData,
+    });
+  }),
+);

@@ -5,6 +5,7 @@ import { nextPublicId } from '@/engines/idGenerator/id.service';
 import { enqueueNotification } from '@/engines/notification/notification.service';
 import { generateReceiptPdf } from '@/engines/export/receipt.service';
 import { storage } from '@/utils/storage';
+import { broadcastDashboardUpdate } from '@/modules/dashboard/dashboard.service';
 
 /**
  * Donations (§5.8), three flows:
@@ -69,6 +70,7 @@ export async function submitManualDonation(input: {
     body: `Your donation ${donation.publicId} of ${input.currency} ${input.totalAmount.toFixed(2)} to ${org.name} is pending verification.`,
   });
 
+  broadcastDashboardUpdate(input.organizationId);
   return donation;
 }
 
@@ -99,6 +101,9 @@ export async function decideDonation(donationId: string, decision: 'VERIFY' | 'R
       to: { PUSH: donation.member.userId, IN_APP: donation.member.userId },
       body: `Your donation ${donation.publicId} could not be verified.${reason ? ` Reason: ${reason}` : ''}`,
     });
+    if (donation.organizationId) {
+      broadcastDashboardUpdate(donation.organizationId);
+    }
     return updated;
   }
 
@@ -117,6 +122,9 @@ export async function decideDonation(donationId: string, decision: 'VERIFY' | 'R
     body: `Your donation ${donation.publicId} has been verified. Receipt ${receipt.publicId} is available for download.`,
   });
 
+  if (donation.organizationId) {
+    broadcastDashboardUpdate(donation.organizationId);
+  }
   return updated;
 }
 

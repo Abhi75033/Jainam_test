@@ -40,6 +40,44 @@ export async function getSeatMap(eventId: string) {
   });
 }
 
+// Incremental builder (admin panel): one section / row / batch of seats at a time
+export async function createSection(eventId: string, name: string, mode: 'OPEN' | 'RESERVED') {
+  const event = await prisma.event.findUnique({ where: { id: eventId } });
+  if (!event || event.deletedAt) throw ApiError.notFound('Event not found');
+  return prisma.seatingSection.create({ data: { eventId, name, mode } });
+}
+
+export async function createRow(sectionId: string, name: string) {
+  const section = await prisma.seatingSection.findUnique({ where: { id: sectionId } });
+  if (!section) throw ApiError.notFound('Section not found');
+  return prisma.seatingRow.create({ data: { sectionId, name } });
+}
+
+export async function addSeatsToRow(rowId: string, count: number) {
+  const row = await prisma.seatingRow.findUnique({ where: { id: rowId }, include: { seats: true } });
+  if (!row) throw ApiError.notFound('Row not found');
+  const start = row.seats.length + 1;
+  const labels = Array.from({ length: count }, (_, i) => String(start + i));
+  await prisma.seat.createMany({ data: labels.map((label) => ({ rowId, label })), skipDuplicates: true });
+  return prisma.seat.findMany({ where: { rowId }, orderBy: { label: 'asc' } });
+}
+
+// Manual seat blocking by Super Admin (no checkout session / Redis TTL)
+export async function adminLockSeat(seatId: string) {
+  const seat = await prisma.seat.findUnique({ where: { id: seatId } });
+  if (!seat) throw ApiError.notFound('Seat not found');
+  if (seat.status === 'BOOKED') throw ApiError.conflict(`Seat ${seat.label} is already booked`);
+  return prisma.seat.update({ where: { id: seatId }, data: { status: 'LOCKED', lockToken: 'ADMIN', lockExpiresAt: null } });
+}
+
+export async function adminReleaseSeat(seatId: string) {
+  const seat = await prisma.seat.findUnique({ where: { id: seatId } });
+  if (!seat) throw ApiError.notFound('Seat not found');
+  if (seat.status === 'BOOKED') throw ApiError.conflict(`Seat ${seat.label} is booked — refund the ticket instead`);
+  await redis.del(seatLockKey(seatId));
+  return prisma.seat.update({ where: { id: seatId }, data: { status: 'AVAILABLE', lockToken: null, lockExpiresAt: null } });
+}
+
 /**
  * Lock a seat during checkout. Redis SET NX EX gives an atomic TTL lock; the
  * DB row mirrors it for seat-map display. A delayed job releases the DB state

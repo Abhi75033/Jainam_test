@@ -16,13 +16,18 @@ export const createStaffSchema = z.object({
       departmentId: z.string().optional(),
       designationId: z.string().optional(),
       joiningDate: z.coerce.date().optional(),
+      category: z.string().optional(),
+      categorySpecify: z.string().optional(),
+      reportingTo: z.string().optional(),
+      dob: z.coerce.date().optional(),
+      gender: z.string().optional(),
+      permanentAddress: z.record(z.string(), z.unknown()).optional(),
       aadhaar: z.string().optional(),
       pan: z.string().optional(),
       addresses: z.record(z.string(), z.unknown()).optional(),
       emergencyMedicalInfo: z.record(z.string(), z.unknown()).optional(),
       govtDocuments: z
         .array(z.object({ docType: z.string(), docNumber: z.string(), imageUrl: z.string().optional(), expiryDate: z.coerce.date().optional() }))
-        .max(2)
         .optional(),
       modulePermissions: z.array(z.object({ module: z.string(), actions: z.array(z.enum(PERMISSION_ACTIONS)) })).optional(),
     })

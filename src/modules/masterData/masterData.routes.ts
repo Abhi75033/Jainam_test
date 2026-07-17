@@ -46,6 +46,48 @@ function getModel(listKey: string) {
 
 export const masterDataRoutes = Router();
 
+// Custom Bhagwan Master routes with Category support
+masterDataRoutes.get('/bhagwans', requireAuth, asyncHandler(async (req: Request, res: Response) => {
+  const { category } = req.query;
+  const rows = await prisma.bhagwanMaster.findMany({
+    where: {
+      deletedAt: null,
+      category: category ? (category as string) : undefined,
+    },
+    orderBy: [
+      { category: 'asc' },
+      { name: 'asc' }
+    ]
+  });
+  return ok(res, rows);
+}));
+
+masterDataRoutes.post('/bhagwans', requireAuth, requireRole('SUPER_ADMIN'), asyncHandler(async (req: Request, res: Response) => {
+  const { name, category, imageUrl } = req.body;
+  if (!name) throw ApiError.badRequest('Deity name is required.');
+  const row = await prisma.bhagwanMaster.create({
+    data: {
+      name,
+      category: category || 'Others',
+      imageUrl,
+    },
+  });
+  return created(res, row);
+}));
+
+masterDataRoutes.patch('/bhagwans/:id', requireAuth, requireRole('SUPER_ADMIN'), asyncHandler(async (req: Request, res: Response) => {
+  const { name, category, imageUrl } = req.body;
+  const row = await prisma.bhagwanMaster.update({
+    where: { id: req.params.id },
+    data: {
+      name: name || undefined,
+      category: category || undefined,
+      imageUrl: imageUrl !== undefined ? imageUrl : undefined,
+    },
+  });
+  return ok(res, row);
+}));
+
 // Hierarchical lists (registered before the generic /:listKey routes)
 masterDataRoutes.get('/sub-communities', requireAuth, asyncHandler(async (req: Request, res: Response) => {
   const rows = await prisma.subCommunity.findMany({ where: { deletedAt: null, communityId: req.query.communityId as string | undefined }, include: { community: true } });

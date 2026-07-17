@@ -53,15 +53,25 @@ galleryRoutes.post(
   }),
 );
 
-galleryRoutes.get(
-  '/org/:organizationId',
+const listOrgAlbums = asyncHandler(async (req: Request, res: Response) => {
+  const albums = await prisma.galleryAlbum.findMany({
+    where: { organizationId: req.params.organizationId as string, deletedAt: null },
+    include: { images: { orderBy: { order: 'asc' } } },
+    orderBy: { createdAt: 'desc' },
+  });
+  return ok(res, albums);
+});
+
+galleryRoutes.get('/org/:organizationId', requireAuth, listOrgAlbums);
+// Alias used by the admin panel
+galleryRoutes.get('/albums/org/:organizationId', requireAuth, listOrgAlbums);
+
+galleryRoutes.delete(
+  '/images/:imageId',
   requireAuth,
+  requirePermission('GALLERY', 'DELETE'),
   asyncHandler(async (req: Request, res: Response) => {
-    const albums = await prisma.galleryAlbum.findMany({
-      where: { organizationId: req.params.organizationId as string, deletedAt: null },
-      include: { images: { orderBy: { order: 'asc' } } },
-      orderBy: { createdAt: 'desc' },
-    });
-    return ok(res, albums);
+    await prisma.galleryImage.delete({ where: { id: req.params.imageId as string } });
+    return ok(res, { deleted: true });
   }),
 );

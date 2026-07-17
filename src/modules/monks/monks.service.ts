@@ -11,7 +11,7 @@ import { nextPublicId } from '@/engines/idGenerator/id.service';
 
 export async function createMonk(input: Record<string, unknown> & { createdById: string }) {
   const { createdById, emergencyContact, ...rest } = input as any;
-  return prisma.$transaction(async (tx) => {
+  const monk = await prisma.$transaction(async (tx) => {
     const publicId = await nextPublicId('MONK', tx);
     return tx.monkProfile.create({
       data: {
@@ -23,16 +23,72 @@ export async function createMonk(input: Record<string, unknown> & { createdById:
       },
     });
   });
+
+  try {
+    const { createAutoFeedCard } = await import('@/modules/feed/feed.service');
+    const categoryRow = await prisma.feedCategory.findUnique({ where: { name: 'Monk Updates' } });
+
+    const visibilityConfig = {
+      isPublic: false,
+      community: {
+        communityIds: monk.communityId ? [monk.communityId] : [],
+        subCommunityIds: monk.subCommunityId ? [monk.subCommunityId] : [],
+        gacchaIds: monk.gacchaId ? [monk.gacchaId] : []
+      }
+    };
+
+    await createAutoFeedCard({
+      sourceModule: 'MONKS',
+      sourceId: monk.id,
+      title: `Maharaj Saheb Profile Added`,
+      description: `${monk.dikshaName} has joined the JiNANAM platform. Follow profile for spiritual updates, vihaar tracking, and routine maryadas.`,
+      coverUrl: monk.photoUrl || undefined,
+      visibilityConfig,
+      categoryId: categoryRow?.id,
+    });
+  } catch (err) {
+    console.error('Failed to create auto feed card for monk creation:', err);
+  }
+
+  return monk;
 }
 
 export async function updateMonk(monkId: string, input: Record<string, unknown>, updatedById: string) {
   const existing = await prisma.monkProfile.findUnique({ where: { id: monkId } });
   if (!existing || existing.deletedAt) throw ApiError.notFound('Monk profile not found');
   const { emergencyContact, ...rest } = input as any;
-  return prisma.monkProfile.update({
+  const monk = await prisma.monkProfile.update({
     where: { id: monkId },
     data: { ...rest, emergencyContact: emergencyContact as Prisma.InputJsonValue, updatedById },
   });
+
+  try {
+    const { createAutoFeedCard } = await import('@/modules/feed/feed.service');
+    const categoryRow = await prisma.feedCategory.findUnique({ where: { name: 'Monk Updates' } });
+
+    const visibilityConfig = {
+      isPublic: false,
+      community: {
+        communityIds: monk.communityId ? [monk.communityId] : [],
+        subCommunityIds: monk.subCommunityId ? [monk.subCommunityId] : [],
+        gacchaIds: monk.gacchaId ? [monk.gacchaId] : []
+      }
+    };
+
+    await createAutoFeedCard({
+      sourceModule: 'MONKS',
+      sourceId: monk.id,
+      title: `Maharaj Saheb Profile Updated`,
+      description: `${monk.dikshaName} details have been updated.`,
+      coverUrl: monk.photoUrl || undefined,
+      visibilityConfig,
+      categoryId: categoryRow?.id,
+    });
+  } catch (err) {
+    console.error('Failed to create auto feed card for monk update:', err);
+  }
+
+  return monk;
 }
 
 export async function getMonk(monkId: string) {
@@ -70,12 +126,34 @@ export async function softDeleteMonk(monkId: string, deletedById: string) {
 
 // --- Monk groups ---
 
-export async function createMonkGroup(input: { name: string; leaderMonkId?: string; memberMonkIds?: string[] }) {
-  const group = await prisma.monkGroup.create({ data: { name: input.name, leaderMonkId: input.leaderMonkId } });
-  if (input.memberMonkIds?.length) {
-    await prisma.monkProfile.updateMany({ where: { id: { in: input.memberMonkIds } }, data: { groupId: group.id } });
-  }
-  return prisma.monkGroup.findUnique({ where: { id: group.id }, include: { members: true } });
+export async function createMonkGroup(input: {
+  name: string;
+  leaderMonkId?: string;
+  memberMonkIds?: string[];
+  jainMembers?: any;
+  nonJainMembers?: any;
+  notes?: string;
+}) {
+  return prisma.$transaction(async (tx) => {
+    const groupNumber = await nextPublicId('MONK_GROUP', tx);
+    const group = await tx.monkGroup.create({
+      data: {
+        name: input.name,
+        leaderMonkId: input.leaderMonkId,
+        groupNumber,
+        jainMembers: input.jainMembers || undefined,
+        nonJainMembers: input.nonJainMembers || undefined,
+        notes: input.notes || undefined,
+      },
+    });
+    if (input.memberMonkIds?.length) {
+      await tx.monkProfile.updateMany({
+        where: { id: { in: input.memberMonkIds } },
+        data: { groupId: group.id },
+      });
+    }
+    return tx.monkGroup.findUnique({ where: { id: group.id }, include: { members: true } });
+  });
 }
 
 // --- Join Monk (follow) ---

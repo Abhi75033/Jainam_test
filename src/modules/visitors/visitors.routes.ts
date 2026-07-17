@@ -7,6 +7,11 @@ import { ok, created } from '@/utils/apiResponse';
 import { ApiError } from '@/utils/ApiError';
 import { prisma } from '@/config/prisma';
 import * as visitorsService from './visitors.service';
+import multer from 'multer';
+import fs from 'fs/promises';
+import path from 'path';
+
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
 const checkInSchema = z.object({
   body: z.object({
@@ -15,11 +20,23 @@ const checkInSchema = z.object({
     memberPublicId: z.string().optional(),
     visitorName: z.string().optional(),
     visitorMobile: z.string().optional(),
+    visitorAddress: z.string().optional(),
+    visitorArea: z.string().optional(),
+    visitorCity: z.string().optional(),
+    visitorState: z.string().optional(),
+    visitorPincode: z.string().optional(),
+    numberOfVisitors: z.number().int().min(1).optional(),
+    vehicleNumber: z.string().optional(),
+    vehicleType: z.string().optional(),
+    visitType: z.string().optional(),
+    visitorCategory: z.string().optional(),
     purpose: z.string().optional(),
     photoUrl: z.string().optional(),
-    vehicleNumber: z.string().optional(),
     idempotencyKey: z.string().min(8),
     checkInAt: z.coerce.date().optional(),
+    deviceId: z.string().optional(),
+    offlineTempId: z.string().optional(),
+    passengerMemberIds: z.string().optional(),
   }),
 });
 
@@ -35,6 +52,16 @@ visitorRoutes.get('/member-lookup', requireAuth, requirePermission('VISITORS', '
   if (!idOrQr) throw ApiError.validation({ q: ['Provide a member ID or QR token'] });
   const member = await visitorsService.guardMemberLookup(idOrQr);
   return ok(res, member);
+}));
+
+visitorRoutes.post('/photo', requireAuth, requirePermission('VISITORS', 'CREATE'), upload.single('photo'), asyncHandler(async (req: Request, res: Response) => {
+  if (!req.file) throw ApiError.validation({ photo: ['No file uploaded'] });
+  const ext = req.file.mimetype.split('/')[1]?.replace('jpeg', 'jpg') || 'jpg';
+  const filename = `visitor-${Date.now()}.${ext}`;
+  const dir = path.resolve(process.cwd(), 'static', 'photos');
+  await fs.mkdir(dir, { recursive: true });
+  await fs.writeFile(path.join(dir, filename), req.file.buffer);
+  return ok(res, { photoUrl: `/static/photos/${filename}` });
 }));
 
 visitorRoutes.post('/check-in', requireAuth, requirePermission('VISITORS', 'CREATE'), scopeToOrganization, validate(checkInSchema), asyncHandler(async (req: Request, res: Response) => {
@@ -62,11 +89,30 @@ visitorRoutes.get('/live/:organizationId', requireAuth, requirePermission('VISIT
 }));
 
 visitorRoutes.get('/search/:organizationId', requireAuth, requirePermission('VISITORS', 'VIEW'), scopeToOrganization, asyncHandler(async (req: Request, res: Response) => {
-  const { memberPublicId, vehicleNumber, entryPublicId, from, to, page = 1, pageSize = 20 } = req.query as any;
+  const {
+    memberPublicId,
+    vehicleNumber,
+    entryPublicId,
+    visitorCategory,
+    visitType,
+    vehicleType,
+    visitStatus,
+    memberVerification,
+    from,
+    to,
+    page = 1,
+    pageSize = 20
+  } = req.query as any;
+
   const { total, rows } = await visitorsService.searchEntries(req.params.organizationId as string, {
     memberPublicId,
     vehicleNumber,
     entryPublicId,
+    visitorCategory,
+    visitType,
+    vehicleType,
+    visitStatus,
+    memberVerification,
     from: from ? new Date(from) : undefined,
     to: to ? new Date(to) : undefined,
     page: Number(page),
@@ -76,16 +122,34 @@ visitorRoutes.get('/search/:organizationId', requireAuth, requirePermission('VIS
 }));
 
 visitorRoutes.get('/search/:organizationId/export', requireAuth, requirePermission('VISITORS', 'VIEW'), scopeToOrganization, asyncHandler(async (req: Request, res: Response) => {
-  const { memberPublicId, vehicleNumber, entryPublicId, from, to } = req.query as any;
+  const {
+    memberPublicId,
+    vehicleNumber,
+    entryPublicId,
+    visitorCategory,
+    visitType,
+    vehicleType,
+    visitStatus,
+    memberVerification,
+    from,
+    to
+  } = req.query as any;
+
   const { rows } = await visitorsService.searchEntries(req.params.organizationId as string, {
     memberPublicId,
     vehicleNumber,
     entryPublicId,
+    visitorCategory,
+    visitType,
+    vehicleType,
+    visitStatus,
+    memberVerification,
     from: from ? new Date(from) : undefined,
     to: to ? new Date(to) : undefined,
     page: 1,
     pageSize: 5000,
   });
+
   const { sendListExport, parseExportFormat } = await import('@/utils/listExport');
   return sendListExport(
     res,
@@ -95,17 +159,25 @@ visitorRoutes.get('/search/:organizationId/export', requireAuth, requirePermissi
       entryId: r.publicId,
       type: r.entryType,
       name: r.member?.fullName ?? r.visitorName ?? '',
+      category: r.visitorCategory ?? 'Non Member',
       checkIn: r.checkInAt.toISOString(),
       checkOut: r.checkOutAt?.toISOString() ?? '',
+      duration: r.visitDuration ? `${r.visitDuration}m` : '',
       vehicle: r.vehicleNumber ?? '',
+      visitors: r.numberOfVisitors,
+      visitType: r.visitType ?? '',
     })),
     [
       { key: 'entryId', header: 'Entry ID' },
       { key: 'type', header: 'Type' },
       { key: 'name', header: 'Name' },
+      { key: 'category', header: 'Category' },
       { key: 'checkIn', header: 'Check-In' },
       { key: 'checkOut', header: 'Check-Out' },
+      { key: 'duration', header: 'Duration' },
       { key: 'vehicle', header: 'Vehicle' },
+      { key: 'visitors', header: 'Visitors' },
+      { key: 'visitType', header: 'Visit Type' },
     ],
   );
 }));

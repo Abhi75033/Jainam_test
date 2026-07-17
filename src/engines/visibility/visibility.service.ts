@@ -17,11 +17,21 @@ import { VisibilityConfig } from './visibility.types';
  * pulling full member tables into application memory.
  */
 
-export async function getEligibleMemberIds(config: VisibilityConfig): Promise<Set<string>> {
+export async function getEligibleMemberIds(config: VisibilityConfig, requestingMemberId?: string): Promise<Set<string>> {
+  // Non-Jain members see everything — no community or geo filters apply (§5.3 spec).
+  if (requestingMemberId) {
+    const m = await prisma.member.findFirst({ where: { id: requestingMemberId, deletedAt: null }, select: { category: true } });
+    if (m?.category === 'NON_JAIN') {
+      const all = await prisma.member.findMany({ where: { deletedAt: null }, select: { id: true } });
+      return new Set(all.map((x) => x.id));
+    }
+  }
+
   if (config.isPublic) {
     const all = await prisma.member.findMany({ where: { deletedAt: null }, select: { id: true } });
     return new Set(all.map((m) => m.id));
   }
+
 
   const eligible = new Set<string>();
 

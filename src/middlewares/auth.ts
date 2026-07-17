@@ -10,9 +10,15 @@ import { loadEffectivePermissions, isActionAllowed } from '@/engines/rbac/permis
  */
 export async function requireAuth(req: Request, _res: Response, next: NextFunction) {
   try {
+    let token = '';
     const header = req.headers.authorization;
-    if (!header?.startsWith('Bearer ')) throw ApiError.unauthorized('Missing bearer token');
-    const token = header.slice('Bearer '.length);
+    if (header?.startsWith('Bearer ')) {
+      token = header.slice('Bearer '.length);
+    } else if (req.query.token && typeof req.query.token === 'string') {
+      token = req.query.token;
+    } else {
+      throw ApiError.unauthorized('Missing bearer token');
+    }
 
     const payload = verifyAccessToken(token);
     const effective = await loadEffectivePermissions(payload.sub);
@@ -82,4 +88,11 @@ export function requireRole(...roles: string[]) {
     if (req.actor.isSuperAdmin || roles.includes(req.actor.role)) return next();
     next(ApiError.forbidden());
   };
+}
+
+/** Middleware that only allows Super Admins through */
+export function requireSuperAdmin(req: Request, _res: Response, next: NextFunction) {
+  if (!req.actor) return next(ApiError.unauthorized());
+  if (!req.actor.isSuperAdmin) return next(ApiError.forbidden('Super Admin access required.'));
+  return next();
 }

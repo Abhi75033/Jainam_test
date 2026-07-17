@@ -45,7 +45,10 @@ export async function updateTicketStatus(ticketId: string, status: TicketStatusG
 
 /** Super Admin queue. */
 export async function listTickets(filters: { status?: TicketStatusGeneric; type?: SupportTicketType; page: number; pageSize: number }) {
-  const where = { status: filters.status, type: filters.type };
+  const where: any = {};
+  if (filters.status) where.status = filters.status;
+  if (filters.type) where.type = filters.type;
+
   const [total, rows] = await Promise.all([
     prisma.supportTicket.count({ where }),
     prisma.supportTicket.findMany({
@@ -56,10 +59,37 @@ export async function listTickets(filters: { status?: TicketStatusGeneric; type?
       take: filters.pageSize,
     }),
   ]);
-  return { total, rows };
+
+  const userIds = Array.from(new Set(rows.map((r) => r.raisedByUserId)));
+  const users = await prisma.user.findMany({
+    where: { id: { in: userIds } },
+    select: { id: true, firstName: true, lastName: true, mobile: true },
+  });
+  const usersMap = new Map(users.map((u) => [u.id, u]));
+
+  const rowsWithUser = rows.map((r) => ({
+    ...r,
+    raisedByUser: usersMap.get(r.raisedByUserId) || null,
+  }));
+
+  return { total, rows: rowsWithUser };
 }
 
 /** Member/admin-side tracking of their own tickets. */
 export async function listMyTickets(raisedByUserId: string) {
-  return prisma.supportTicket.findMany({ where: { raisedByUserId }, orderBy: { createdAt: 'desc' } });
+  const rows = await prisma.supportTicket.findMany({
+    where: { raisedByUserId },
+    include: { organization: { select: { name: true, publicId: true } } },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  const user = await prisma.user.findUnique({
+    where: { id: raisedByUserId },
+    select: { id: true, firstName: true, lastName: true, mobile: true },
+  });
+
+  return rows.map((r) => ({
+    ...r,
+    raisedByUser: user || null,
+  }));
 }

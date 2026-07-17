@@ -9,7 +9,7 @@ import { prisma } from '@/config/prisma';
 
 const createPollSchema = z.object({
   body: z.object({
-    feedPostId: z.string().min(1),
+    feedPostId: z.string().min(1).optional(),
     question: z.string().min(1),
     options: z.array(z.string().min(1)).min(2).max(10),
     allowMultiple: z.boolean().default(false),
@@ -23,7 +23,15 @@ const voteSchema = z.object({ body: z.object({ optionIndex: z.number().int().min
 export const pollRoutes = Router();
 
 pollRoutes.post('/', requireAuth, requirePermission('POLLS', 'CREATE'), validate(createPollSchema), asyncHandler(async (req: Request, res: Response) => {
-  const poll = await prisma.poll.create({ data: req.body });
+  let { feedPostId } = req.body as { feedPostId?: string };
+  if (!feedPostId) {
+    // Admin panel creates standalone polls — wrap them in a feed post automatically
+    const post = await prisma.feedPost.create({
+      data: { title: req.body.question, type: 'MANUAL', sourceModule: 'POLLS', authorUserId: req.actor!.userId },
+    });
+    feedPostId = post.id;
+  }
+  const poll = await prisma.poll.create({ data: { ...req.body, feedPostId } });
   return created(res, poll);
 }));
 

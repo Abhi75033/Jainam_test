@@ -115,6 +115,16 @@ export async function getAvailabilityCalendar(bookingItemId: string, from: Date,
 
 async function pushStatus(bookingId: string, status: BookingStatus, changedById?: string, note?: string, tx: Prisma.TransactionClient | typeof prisma = prisma) {
   await tx.bookingStatusHistory.create({ data: { bookingId, status, changedById, note } });
+  
+  // Non-blocking dashboard stats update broadcast
+  tx.booking.findUnique({ where: { id: bookingId }, select: { organizationId: true } })
+    .then((booking) => {
+      if (booking) {
+        const { broadcastDashboardUpdate } = require('../dashboard/dashboard.service');
+        broadcastDashboardUpdate(booking.organizationId);
+      }
+    })
+    .catch(() => {});
 }
 
 export async function submitBooking(memberId: string, input: { bookingItemId: string; dateFrom: Date; dateTo?: Date; slot?: string; peopleCount: number }) {

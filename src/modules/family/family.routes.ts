@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { requireAuth } from '@/middlewares/auth';
+import { requireAuth, requireRole } from '@/middlewares/auth';
 import { validate } from '@/middlewares/validate';
 import { asyncHandler } from '@/utils/asyncHandler';
 import { ok } from '@/utils/apiResponse';
@@ -46,5 +46,16 @@ familyRoutes.get(
       ...asRelated.map((l) => ({ id: l.id, relation: l.relationshipType.name, direction: 'ADDED_ME' as const, member: l.primaryMember, createdAt: l.createdAt })),
     ];
     return ok(res, rows);
+  }),
+);
+
+/** Remove a family link (§5.2: family links are permanent for members; Super Admin only). */
+familyRoutes.delete(
+  '/:linkId',
+  requireAuth,
+  requireRole('SUPER_ADMIN'),
+  asyncHandler(async (req: Request, res: Response) => {
+    await prisma.familyMember.delete({ where: { id: req.params.linkId as string } });
+    return ok(res, { deleted: true });
   }),
 );

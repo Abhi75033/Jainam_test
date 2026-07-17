@@ -62,7 +62,13 @@ calendarRoutes.get('/today', requireAuth, asyncHandler(async (req: Request, res:
 }));
 
 calendarRoutes.get('/month', requireAuth, asyncHandler(async (req: Request, res: Response) => {
-  const { typeId, year, month } = req.query as any;
+  const { year, month } = req.query as any;
+  let typeId = (req.query as any).typeId as string | undefined;
+  if (!typeId) {
+    // Default to the first calendar type (admin panel omits typeId)
+    const firstType = await prisma.tithiCalendarType.findFirst({ where: { deletedAt: null }, orderBy: { name: 'asc' } });
+    typeId = firstType?.id;
+  }
   if (!typeId || !year || !month) throw ApiError.validation({ query: ['typeId, year, month are required'] });
   const entries = await calendarService.monthView(String(typeId), Number(year), Number(month));
   return ok(res, entries);

@@ -27,7 +27,11 @@ export async function createPage(input: Record<string, unknown> & { ownerUserIds
     });
     for (const userId of ownerUserIds as string[]) {
       await tx.communityPageOwner.create({ data: { pageId: created.id, userId } });
-      await tx.user.update({ where: { id: userId }, data: { primaryRoleKey: 'PAGE_OWNER' } });
+      // Elevate plain members to PAGE_OWNER; never downgrade admin/staff roles
+      await tx.user.updateMany({
+        where: { id: userId, primaryRoleKey: { in: ['MEMBER', 'NON_JAIN_MEMBER'] } },
+        data: { primaryRoleKey: 'PAGE_OWNER' },
+      });
     }
     return created;
   });

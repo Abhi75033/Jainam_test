@@ -74,6 +74,13 @@ settingsRoutes.put('/roles/:roleKey/permissions', requireAuth, requireRole('SUPE
 }));
 
 // Per-user permission overrides
+settingsRoutes.get('/users/:userId/permission-overrides', requireAuth, requireRole('SUPER_ADMIN'), asyncHandler(async (req: Request, res: Response) => {
+  const overrides = await prisma.userPermissionOverride.findMany({
+    where: { userId: req.params.userId as string },
+  });
+  return ok(res, overrides);
+}));
+
 settingsRoutes.post('/users/:userId/permission-overrides', requireAuth, requireRole('SUPER_ADMIN'), validate(overrideSchema), asyncHandler(async (req: Request, res: Response) => {
   const { organizationId, module, action, allowed } = req.body;
   const override = await prisma.userPermissionOverride.upsert({
@@ -100,6 +107,14 @@ settingsRoutes.post('/users/:userId/permission-overrides', requireAuth, requireR
   });
 
   return ok(res, override);
+}));
+
+settingsRoutes.delete('/users/:userId/permission-overrides/:overrideId', requireAuth, requireRole('SUPER_ADMIN'), asyncHandler(async (req: Request, res: Response) => {
+  const override = await prisma.userPermissionOverride.delete({
+    where: { id: req.params.overrideId as string },
+  });
+  await recordAudit({ ...auditContextFromRequest(req), module: 'SETTINGS', action: 'PERMISSION_CHANGE', entityType: 'UserPermissionOverride', entityId: override.id, before: override, isCritical: true });
+  return ok(res, { success: true });
 }));
 
 // Alert thresholds

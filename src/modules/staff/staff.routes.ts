@@ -26,3 +26,14 @@ staffRoutes.get('/org/:organizationId', requireAuth, requirePermission('STAFF', 
 staffRoutes.get('/me/qr', requireAuth, staffController.myStaffQr);
 staffRoutes.post('/:staffId/shifts', requireAuth, requirePermission('STAFF', 'EDIT'), staffController.createShift);
 staffRoutes.get('/:staffId/shifts', requireAuth, requirePermission('STAFF', 'VIEW'), staffController.listShifts);
+
+// Admin-managed attendance
+staffRoutes.get('/:staffId/attendance', requireAuth, requirePermission('STAFF', 'VIEW'), staffController.listAttendance);
+staffRoutes.post('/:staffId/attendance/check-in', requireAuth, requirePermission('STAFF', 'EDIT'), staffController.adminCheckIn);
+staffRoutes.post('/:staffId/attendance/check-out', requireAuth, requirePermission('STAFF', 'EDIT'), staffController.adminCheckOut);
+
+// Manual attendance overrides, documents uploads and configurations
+staffRoutes.post('/:staffId/manual-attendance', requireAuth, requirePermission('STAFF', 'EDIT'), staffController.addManualAttendance);
+staffRoutes.post('/:staffId/documents', requireAuth, requirePermission('STAFF', 'EDIT'), staffController.uploadDocument);
+staffRoutes.patch('/org/:organizationId/settings', requireAuth, requirePermission('STAFF', 'EDIT'), scopeToOrganization, staffController.updateOrgSettings);
+staffRoutes.get('/org/:organizationId/reports/export', requireAuth, requirePermission('STAFF', 'VIEW'), scopeToOrganization, staffController.exportReports);

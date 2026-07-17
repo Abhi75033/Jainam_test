@@ -38,6 +38,17 @@ import { auditLogRoutes } from '@/modules/auditLogs/auditLogs.routes';
 import { dashboardRoutes } from '@/modules/dashboard/dashboard.routes';
 import { masterDataRoutes } from '@/modules/masterData/masterData.routes';
 import { searchRoutes } from '@/modules/search/search.routes';
+import { uploadRoutes } from '@/modules/uploads/uploads.routes';
+// New admin panel modules
+import { faqRoutes } from '@/modules/faqs/faqs.routes';
+import { chaturmasRoutes } from '@/modules/chaturmas/chaturmas.routes';
+import { feedbackRoutes } from '@/modules/feedback/feedback.routes';
+import { incorrectReportRoutes } from '@/modules/incorrectReports/incorrectReports.routes';
+// Super Admin exclusive modules (Banners, Home Sections, Subscription Plans, Manual Tracking)
+import { bannerRoutes } from '@/modules/banners/banners.routes';
+import { homeSectionRoutes } from '@/modules/homeSections/homeSections.routes';
+import { subscriptionPlanRoutes } from '@/modules/subscriptionPlans/subscriptionPlans.routes';
+import { manualTrackingRoutes } from '@/modules/manualTracking/manualTracking.routes';
 
 export function registerRoutes(app: Express) {
   const v1 = Router();
@@ -80,6 +91,18 @@ export function registerRoutes(app: Express) {
   v1.use('/dashboard', dashboardRoutes);
   v1.use('/master-data', masterDataRoutes);
   v1.use('/search', searchRoutes);
+  v1.use('/uploads', uploadRoutes);
+  // New admin panel modules
+  v1.use('/faqs', faqRoutes);
+  v1.use('/chaturmas', chaturmasRoutes);
+  v1.use('/feedback', feedbackRoutes);
+  v1.use('/incorrect-reports', incorrectReportRoutes);
+  // Super Admin exclusive modules
+  v1.use('/banners', bannerRoutes);
+  v1.use('/home-sections', homeSectionRoutes);
+  v1.use('/subscription-plans', subscriptionPlanRoutes);
+  v1.use('/manual-tracking', manualTrackingRoutes);
 
   app.use(env.API_BASE_PATH, v1);
 }
+

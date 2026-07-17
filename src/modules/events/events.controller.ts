@@ -142,6 +142,15 @@ export const submitFeedback = asyncHandler(async (req: Request, res: Response) =
   return created(res, feedback);
 });
 
+export const listFeedback = asyncHandler(async (req: Request, res: Response) => {
+  const feedback = await prisma.eventFeedback.findMany({
+    where: { eventId: req.params.eventId as string },
+    include: { member: { select: { publicId: true, fullName: true, photoUrl: true } } },
+    orderBy: { createdAt: 'desc' },
+  });
+  return ok(res, feedback);
+});
+
 export const cancelEvent = asyncHandler(async (req: Request, res: Response) => {
   const event = await eventsService.cancelEvent(req.params.eventId as string, req.body.reason, req.body.refundPolicyNote, {
     userId: req.actor!.userId,

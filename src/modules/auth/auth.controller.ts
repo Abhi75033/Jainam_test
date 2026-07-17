@@ -99,3 +99,67 @@ export const assignAdminOrganizations = asyncHandler(async (req: Request, res: R
   const rows = await adminAccountsService.assignAdminToOrganizations(req.params.userId as string, req.body.organizationIds, req.actor!.userId);
   return ok(res, rows);
 });
+
+export const listAdmins = asyncHandler(async (req: Request, res: Response) => {
+  const admins = await prisma.user.findMany({
+    where: {
+      primaryRoleKey: {
+        in: ['SUPER_ADMIN', 'TEMPLE_ADMIN', 'DHARAMSHALA_ADMIN', 'JAIN_CENTER_ADMIN', 'MONK_ADMIN'],
+      },
+      deletedAt: null,
+    },
+    select: {
+      id: true,
+      publicId: true,
+      mobile: true,
+      email: true,
+      firstName: true,
+      lastName: true,
+      primaryRoleKey: true,
+      status: true,
+      createdAt: true,
+      userOrganizations: {
+        select: {
+          id: true,
+          organizationId: true,
+          roleKey: true,
+          organization: {
+            select: {
+              id: true,
+              name: true,
+              type: true,
+              city: true,
+            },
+          },
+        },
+      },
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+  return ok(res, admins);
+});
+
+export const deleteAdminAccount = asyncHandler(async (req: Request, res: Response) => {
+  const userId = req.params.userId as string;
+  if (userId === req.actor!.userId) {
+    throw Object.assign(new Error('You cannot delete your own admin account'), { statusCode: 403 });
+  }
+  const deletedUser = await prisma.user.update({
+    where: { id: userId },
+    data: {
+      status: 'DELETED',
+      deletedAt: new Date(),
+      deletedById: req.actor!.userId,
+    },
+  });
+  await recordAudit({
+    ...auditContextFromRequest(req),
+    module: 'SETTINGS',
+    action: 'DELETE',
+    entityType: 'AdminAccount',
+    entityId: userId,
+    before: { mobile: deletedUser.mobile, role: deletedUser.primaryRoleKey },
+    isCritical: true,
+  });
+  return ok(res, { success: true });
+});

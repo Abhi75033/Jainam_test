@@ -107,6 +107,8 @@ model User {
   loginHistory        LoginHistory[]
   auditLogs           AuditLog[]
   notificationLogs    NotificationLog[]
+  feedbacks           UserFeedback[]
+  incorrectReports    IncorrectReport[]   @relation("IncorrectReportReporter")
 
   @@index([status])
   @@map("users")
@@ -334,6 +336,7 @@ model TithiCorrectionTicket {
 model BhagwanMaster {
   id        String    @id @default(cuid())
   name      String    @unique
+  category  String    @default("Others")
   imageUrl  String?
   deletedAt DateTime?
 
@@ -583,6 +586,10 @@ model Organization {
   disclaimerText          String?
   avgRating               Float              @default(0)
   followersCount          Int                @default(0)
+  staffWorkingHoursStart  String?
+  staffWorkingHoursEnd    String?
+  staffLateArrivalAfter   String?
+  staffEarlyExitBefore    String?
   createdById             String?
   updatedById             String?
   createdAt               DateTime           @default(now())
@@ -619,6 +626,10 @@ model Organization {
   communicationsFrom     OrgCommunication[]         @relation("CommFromOrg")
   communicationsTo       OrgCommunication[]         @relation("CommToOrg")
   MonkProfile            MonkProfile[]
+  faqs                   OrgFaq[]
+  chaturmasPlans         ChaturmasPlan[]
+  userFeedbacks          UserFeedback[]
+  incorrectReports       IncorrectReport[]
 
   @@index([type])
   @@index([lat, lng])
@@ -850,56 +861,87 @@ enum MonkGender {
 }
 
 model MonkProfile {
-  id               String        @id @default(cuid())
-  publicId         String        @unique
-  dikshaName       String
-  photoUrl         String?
-  gender           MonkGender
-  dob              DateTime?
-  dobPlace         String?
-  nameBeforeDiksha String?
-  bio              String?
-  dikshaDate       DateTime?
-  dikshaPlace      String?
-  dikshaGuruId     String?
-  dikshaGuru       MonkProfile?  @relation("DikshaGuru", fields: [dikshaGuruId], references: [id])
-  discipleOf       MonkProfile[] @relation("DikshaGuru")
-  communityId      String?
-  community        Community?    @relation(fields: [communityId], references: [id])
-  subCommunityId   String?
-  subCommunity     SubCommunity? @relation(fields: [subCommunityId], references: [id])
-  gacchaId         String?
-  gaccha           Gaccha?       @relation(fields: [gacchaId], references: [id])
-  currentTempleId  String?
-  currentTemple    Organization? @relation(fields: [currentTempleId], references: [id])
-  status           String        @default("ACTIVE")
-  emergencyContact Json?
-  groupId          String?
-  group            MonkGroup?    @relation(fields: [groupId], references: [id])
-  createdById      String?
-  updatedById      String?
-  createdAt        DateTime      @default(now())
-  updatedAt        DateTime      @updatedAt
-  deletedAt        DateTime?
-  deletedById      String?
+  id                String        @id @default(cuid())
+  publicId          String        @unique
+  dikshaName        String
+  photoUrl          String?
+  gender            MonkGender
+  dob               DateTime?
+  dobPlace          String?
+  nameBeforeDiksha  String?
+  bio               String?
+  dikshaDate        DateTime?
+  dikshaPlace       String?
+  dikshaGuruId      String?
+  dikshaGuru        MonkProfile?  @relation("DikshaGuru", fields: [dikshaGuruId], references: [id])
+  discipleOf        MonkProfile[] @relation("DikshaGuru")
+  communityId       String?
+  community         Community?    @relation(fields: [communityId], references: [id])
+  subCommunityId    String?
+  subCommunity      SubCommunity? @relation(fields: [subCommunityId], references: [id])
+  gacchaId          String?
+  gaccha            Gaccha?       @relation(fields: [gacchaId], references: [id])
+  currentTempleId   String?
+  currentTemple     Organization? @relation(fields: [currentTempleId], references: [id])
+  status            String        @default("ACTIVE")
+  emergencyContact  Json?
+  groupId           String?
+  group             MonkGroup?    @relation(fields: [groupId], references: [id])
+  
+  // Rich new fields for MS Profile
+  shortName         String?
+  nirvanaDate       DateTime?
+  nirvanaPlace      String?
+  preDikshaFather   Json?
+  preDikshaMother   Json?
+  siblings          Json?
+  preDikshaLocation Json?
+  timeline          Json?
+  tapasya           Json?
+  tracking          Json?
+  chaturmasHistory  Json?
+  routine           Json?
+  languages         Json?
+  health            Json?
+  media             Json?
+  sanghContacts     Json?
+  recognitions      Json?
+  socialLinks       Json?
+  verified          Boolean       @default(false)
+  assignedAdminId   String?
 
-  follows        MonkFollow[]
-  devices        Device[]
-  routes         Route[]
-  journeys       Journey[]
-  alerts         Alert[]
-  toursAsPrimary Tour[]       @relation("PrimaryMonk")
+  createdById       String?
+  updatedById       String?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+  deletedAt         DateTime?
+  deletedById       String?
+
+  follows               MonkFollow[]
+  devices               Device[]
+  routes                Route[]
+  journeys              Journey[]
+  alerts                Alert[]
+  toursAsPrimary        Tour[]                @relation("PrimaryMonk")
+  chaturmasPlans        ChaturmasPlan[]
+  manualTrackingEntries ManualTrackingEntry[]
 
   @@index([groupId])
   @@map("monk_profiles")
 }
 
 model MonkGroup {
-  id           String    @id @default(cuid())
-  name         String
-  leaderMonkId String?
-  createdAt    DateTime  @default(now())
-  deletedAt    DateTime?
+  id             String    @id @default(cuid())
+  name           String
+  leaderMonkId   String?
+  createdAt      DateTime  @default(now())
+  deletedAt      DateTime?
+
+  // Rich group attributes
+  groupNumber    String?   @unique
+  jainMembers    Json?
+  nonJainMembers Json?
+  notes          String?
 
   members MonkProfile[]
   tours   Tour[]
@@ -1051,6 +1093,7 @@ model Member {
   offerSaves               OfferSave[]
   newsBookmarks            NewsBookmark[]
   pollVotes                PollVote[]
+  feedSaves                FeedPostSave[]
   communityPageMemberships CommunityPageMember[]
 
   memberCounters MemberCounter[]
@@ -1240,6 +1283,12 @@ model Staff {
   designation          StaffDesignation? @relation(fields: [designationId], references: [id])
   joiningDate          DateTime?
   employmentStatus     EmploymentStatus  @default(ACTIVE)
+  category             String?
+  categorySpecify      String?
+  reportingTo          String?
+  dob                  DateTime?
+  gender               String?
+  permanentAddress     Json?
   aadhaarEncrypted     String?
   panEncrypted         String?
   addresses            Json?
@@ -1291,13 +1340,15 @@ model StaffModulePermission {
 }
 
 model StaffAttendance {
-  id         String    @id @default(cuid())
-  staffId    String
-  staff      Staff     @relation(fields: [staffId], references: [id])
-  checkInAt  DateTime  @default(now())
-  checkOutAt DateTime?
-  method     String    @default("MANUAL") // QR | MANUAL
-  location   Json?
+  id           String    @id @default(cuid())
+  staffId      String
+  staff        Staff     @relation(fields: [staffId], references: [id])
+  checkInAt    DateTime  @default(now())
+  checkOutAt   DateTime?
+  status       String    @default("PRESENT") // PRESENT | HALF_DAY | ABSENT | LEAVE | HOLIDAY
+  workingHours Float?
+  method       String    @default("MANUAL") // QR | MANUAL
+  location     Json?
 
   @@index([staffId, checkInAt])
   @@map("staff_attendance")
@@ -1964,24 +2015,39 @@ enum VisitorEntryType {
 }
 
 model VisitorEntry {
-  id             String           @id @default(cuid())
-  publicId       String           @unique
-  organizationId String
-  organization   Organization     @relation(fields: [organizationId], references: [id])
-  entryType      VisitorEntryType
-  memberId       String?
-  member         Member?          @relation(fields: [memberId], references: [id])
-  visitorName    String?
-  visitorMobile  String?
-  purpose        String?
-  photoUrl       String?
-  vehicleNumber  String?
-  checkInAt      DateTime         @default(now())
-  checkOutAt     DateTime?
-  checkedInById  String?
-  checkedInBy    Staff?           @relation("HandledByGuard", fields: [checkedInById], references: [id])
-  idempotencyKey String           @unique
-  syncStatus     String           @default("SYNCED") // SYNCED | PENDING_SYNC
+  id               String           @id @default(cuid())
+  publicId         String           @unique
+  organizationId   String
+  organization     Organization     @relation(fields: [organizationId], references: [id])
+  entryType        VisitorEntryType
+  memberId         String?
+  member           Member?          @relation(fields: [memberId], references: [id])
+  visitorName      String?
+  visitorMobile    String?
+  visitorAddress   String?
+  visitorArea      String?
+  visitorCity      String?
+  visitorState     String?
+  visitorPincode   String?
+  numberOfVisitors Int              @default(1)
+  vehicleNumber    String?
+  vehicleType      String? // Car | Bike | Auto | Bus | Taxi | Other
+  visitType        String? // Day Visit | Stay
+  visitorCategory  String? // Non Member | VIP | Vendor | Contractor | Staff | Delivery | Unknown Visitor | Others
+  purpose          String?
+  photoUrl         String?
+  checkInAt        DateTime         @default(now())
+  checkOutAt       DateTime?
+  visitDuration    Int? // in minutes
+  checkedInById    String?
+  checkedInBy      Staff?           @relation("HandledByGuard", fields: [checkedInById], references: [id])
+  idempotencyKey   String           @unique
+  syncStatus       String           @default("SYNCED") // SYNCED | PENDING_SYNC
+  deviceId         String?
+  updatedById      String?
+  offlineTempId      String?
+  passengerMemberIds String?
+  lastModifiedAt     DateTime         @default(now()) @updatedAt
 
   @@index([organizationId, checkInAt])
   @@index([vehicleNumber])
@@ -2277,13 +2343,31 @@ model FeedPost {
   startAt          DateTime?
   endAt            DateTime?
   isActive         Boolean        @default(true)
+  isPinned         Boolean        @default(false)
+  viewCount        Int            @default(0)
+  shareCount       Int            @default(0)
+  bookmarkCount    Int            @default(0)
+  clickCount       Int            @default(0)
   createdAt        DateTime       @default(now())
   deletedAt        DateTime?
 
   poll Poll?
+  saves FeedPostSave[]
 
   @@index([organizationId, isActive])
   @@map("feed_posts")
+}
+
+model FeedPostSave {
+  id         String   @id @default(cuid())
+  feedPostId String
+  feedPost   FeedPost @relation(fields: [feedPostId], references: [id])
+  memberId   String
+  member     Member   @relation(fields: [memberId], references: [id])
+  createdAt  DateTime @default(now())
+
+  @@unique([feedPostId, memberId])
+  @@map("feed_post_saves")
 }
 
 model Poll {
@@ -2633,4 +2717,172 @@ model HelpContent {
   bodyHtml String
 
   @@map("help_content")
+}
+
+// =============================================================================
+// ADMIN PANEL EXTENSIONS — FAQ, Chaturmas, Feedback, Incorrect Reports
+// =============================================================================
+
+/// FAQ items per organization (Temple, Dharamshala, Jain Centre)
+model OrgFaq {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  question       String
+  answer         String
+  category       String       @default("General")
+  displayOrder   Int          @default(0)
+  isActive       Boolean      @default(true)
+  createdById    String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  deletedAt      DateTime?
+  deletedById    String?
+
+  @@index([organizationId])
+  @@map("org_faqs")
+}
+
+/// Chaturmas seasonal stay record per monk per year
+model ChaturmasPlan {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  monkId         String?
+  monk           MonkProfile? @relation(fields: [monkId], references: [id])
+  monkName       String       // Denormalized for non-linked monk records
+  locationName   String
+  startDate      DateTime
+  endDate        DateTime?
+  contactPerson  String?
+  contactMobile  String?
+  status         String       @default("ACTIVE") // ACTIVE | COMPLETED | CANCELLED
+  notes          String?
+  createdById    String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  deletedAt      DateTime?
+
+  @@index([organizationId])
+  @@map("chaturmas_plans")
+}
+
+/// User-submitted feedback/suggestions from the mobile app
+model UserFeedback {
+  id             String       @id @default(cuid())
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+  userId         String?
+  user           User?        @relation(fields: [userId], references: [id])
+  userName       String?
+  category       String       @default("Application") // Application | Dharamshala Booking | Events | etc.
+  comment        String
+  status         String       @default("PENDING") // PENDING | RESOLVED | DISMISSED
+  resolvedAt     DateTime?
+  resolvedById   String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([organizationId])
+  @@map("user_feedback")
+}
+
+/// User-flagged incorrect information reports (temple/monk info corrections)
+model IncorrectReport {
+  id             String       @id @default(cuid())
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+  reporterId     String?
+  reporter       User?        @relation("IncorrectReportReporter", fields: [reporterId], references: [id])
+  reporterName   String?
+  entityType     String       // TEMPLE | MONK | DHARAMSHALA | JAIN_CENTER | MEMBER
+  entityId       String?
+  entityName     String?
+  flaggedField   String       // Which field is incorrect
+  currentValue   String?      // The wrong value
+  correctedValue String       // What it should be
+  status         String       @default("PENDING") // PENDING | VERIFIED | REJECTED | CORRECTED
+  reviewNote     String?
+  reviewedAt     DateTime?
+  reviewedById   String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([organizationId])
+  @@map("incorrect_reports")
+}
+
+// =============================================================================
+// SUPER ADMIN EXTENSIONS — Banners, HomeSection, SubscriptionPlan, ManualTracking
+// =============================================================================
+
+/// Promotional banners shown on the mobile app home screen
+model AppBanner {
+  id          String    @id @default(cuid())
+  title       String
+  imageUrl    String
+  redirectUrl String?
+  displayOrder Int       @default(0)
+  isActive    Boolean   @default(true)
+  createdById String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+  deletedById String?
+
+  @@map("app_banners")
+}
+
+/// Dynamic home screen layout sections for the mobile app
+model AppHomeSection {
+  id           String    @id @default(cuid())
+  name         String
+  sectionType  String    @default("Carousel") // Carousel | Grid | List | Horizontal Cards
+  displayOrder Int       @default(0)
+  isActive     Boolean   @default(true)
+  config       Json?     // optional extra config
+  createdById  String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  deletedAt    DateTime?
+  deletedById  String?
+
+  @@map("app_home_sections")
+}
+
+/// Subscription plans available to partner organizations
+model SubscriptionPlan {
+  id          String    @id @default(cuid())
+  name        String
+  price       Float     @default(0)
+  currency    String    @default("INR")
+  duration    String    @default("Monthly") // Monthly | Annual | Lifetime
+  features    String    // Comma-separated or plain text description
+  isActive    Boolean   @default(true)
+  createdById String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+  deletedById String?
+
+  @@map("subscription_plans")
+}
+
+/// Manual vihar location updates logged by temple admins for monks without GPS
+model ManualTrackingEntry {
+  id           String    @id @default(cuid())
+  monkId       String?
+  monk         MonkProfile? @relation(fields: [monkId], references: [id])
+  monkPublicId String?   // JFMS-xxx for lookup
+  monkName     String    // Denormalized display name
+  stationName  String    // Current location / checkpoint name
+  notes        String?
+  loggedById   String?
+  loggedAt     DateTime  @default(now())
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  deletedAt    DateTime?
+
+  @@index([monkId])
+  @@map("manual_tracking_entries")
 }

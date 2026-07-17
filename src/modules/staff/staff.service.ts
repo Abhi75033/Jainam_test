@@ -20,6 +20,12 @@ interface CreateStaffInput {
   govtDocuments?: { docType: string; docNumber: string; imageUrl?: string; expiryDate?: Date }[];
   modulePermissions?: { module: string; actions: string[] }[];
   createdById: string;
+  category?: string;
+  categorySpecify?: string;
+  reportingTo?: string;
+  dob?: Date;
+  gender?: string;
+  permanentAddress?: Record<string, unknown>;
 }
 
 export async function createStaff(input: CreateStaffInput) {
@@ -65,7 +71,9 @@ export async function createStaff(input: CreateStaffInput) {
     mobile = nm.mobile;
   }
 
-  const staffPublicId = await prisma.$transaction((tx) => nextPublicId('STAFF', tx));
+  // Generate sequential unique Staff ID (JFST01, JFST02, etc.)
+  const count = await prisma.staff.count();
+  const staffPublicId = `JFST${String(count + 1).padStart(2, '0')}`;
   const qrToken = createSignedToken({ purpose: 'STAFF_IDENTITY', id: staffPublicId });
 
   const staff = await prisma.$transaction(async (tx) => {
@@ -78,6 +86,12 @@ export async function createStaff(input: CreateStaffInput) {
         departmentId: input.departmentId,
         designationId: input.designationId,
         joiningDate: input.joiningDate,
+        category: input.category,
+        categorySpecify: input.categorySpecify,
+        reportingTo: input.reportingTo,
+        dob: input.dob ? new Date(input.dob) : null,
+        gender: input.gender,
+        permanentAddress: input.permanentAddress as Prisma.InputJsonValue,
         aadhaarEncrypted: input.aadhaar ? encryptField(input.aadhaar) : null,
         panEncrypted: input.pan ? encryptField(input.pan) : null,
         addresses: input.addresses as Prisma.InputJsonValue,
@@ -96,7 +110,7 @@ export async function createStaff(input: CreateStaffInput) {
 
     if (input.govtDocuments?.length) {
       await tx.staffDocument.createMany({
-        data: input.govtDocuments.slice(0, 2).map((d) => ({
+        data: input.govtDocuments.map((d) => ({
           staffId: created.id,
           docType: d.docType,
           docNumberEncrypted: encryptField(d.docNumber),
@@ -156,13 +170,18 @@ export async function getStaffModules(staffId: string): Promise<string[]> {
 export async function checkIn(staffId: string, method: 'QR' | 'MANUAL', location?: Record<string, unknown>) {
   const openAttendance = await prisma.staffAttendance.findFirst({ where: { staffId, checkOutAt: null }, orderBy: { checkInAt: 'desc' } });
   if (openAttendance) throw ApiError.conflict('Already checked in — check out first');
-  return prisma.staffAttendance.create({ data: { staffId, method, location: location as Prisma.InputJsonValue } });
+  return prisma.staffAttendance.create({ data: { staffId, method, location: location as Prisma.InputJsonValue, status: 'PRESENT' } });
 }
 
 export async function checkOut(staffId: string) {
   const openAttendance = await prisma.staffAttendance.findFirst({ where: { staffId, checkOutAt: null }, orderBy: { checkInAt: 'desc' } });
   if (!openAttendance) throw ApiError.conflict('No active check-in found');
-  return prisma.staffAttendance.update({ where: { id: openAttendance.id }, data: { checkOutAt: new Date() } });
+  const checkOutAt = new Date();
+  const workingHours = Math.round(((checkOutAt.getTime() - openAttendance.checkInAt.getTime()) / 3600000) * 100) / 100;
+  return prisma.staffAttendance.update({
+    where: { id: openAttendance.id },
+    data: { checkOutAt, workingHours, status: 'PRESENT' },
+  });
 }
 
 export async function applyLeave(staffId: string, input: { type: string; startDate: Date; endDate: Date; reason?: string }) {
@@ -177,6 +196,39 @@ export async function updateEmploymentStatus(staffId: string, employmentStatus: 
   const staff = await prisma.staff.update({ where: { id: staffId }, data: { employmentStatus: employmentStatus as any, updatedById: actorId } });
   await prisma.staffActivityLog.create({ data: { staffId, module: 'STAFF', action: `EMPLOYMENT_STATUS_${employmentStatus}` } });
   return staff;
+}
+
+export async function saveManualAttendance(staffId: string, input: { date: Date; status: string; workingHours?: number }) {
+  const startOfDay = new Date(input.date);
+  startOfDay.setHours(0, 0, 0, 0);
+  const endOfDay = new Date(input.date);
+  endOfDay.setHours(23, 59, 59, 999);
+
+  const existing = await prisma.staffAttendance.findFirst({
+    where: { staffId, checkInAt: { gte: startOfDay, lte: endOfDay } }
+  });
+
+  if (existing) {
+    return prisma.staffAttendance.update({
+      where: { id: existing.id },
+      data: {
+        status: input.status,
+        workingHours: input.workingHours ?? (input.status === 'FULL_DAY' || input.status === 'PRESENT' ? 8 : 4),
+        method: 'MANUAL'
+      }
+    });
+  } else {
+    return prisma.staffAttendance.create({
+      data: {
+        staffId,
+        checkInAt: startOfDay,
+        checkOutAt: endOfDay,
+        status: input.status,
+        workingHours: input.workingHours ?? (input.status === 'FULL_DAY' || input.status === 'PRESENT' ? 8 : 4),
+        method: 'MANUAL'
+      }
+    });
+  }
 }
 
 export async function getStaffDashboardStats(organizationId: string) {
@@ -194,7 +246,7 @@ export async function getStaffDashboardStats(organizationId: string) {
   ]);
 
   const yetToCheckOut = await prisma.staffAttendance.count({
-    where: { staff: { organizationId }, checkOutAt: null, checkInAt: { lt: new Date(now.getTime() - 12 * 60 * 60 * 1000) } },
+    where: { staff: { organizationId }, checkOutAt: null },
   });
 
   const presentToday = await prisma.staffAttendance.count({
