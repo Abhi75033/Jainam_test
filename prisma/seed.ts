@@ -602,6 +602,7 @@ async function main() {
   await seedRolesAndPermissions();
   await seedMasterData();
   await seedSuperAdmin();
+  await seedDemoData();
 }
 
 main()
