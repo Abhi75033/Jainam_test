@@ -161,7 +161,7 @@ export const updateOrgSettings = asyncHandler(async (req: Request, res: Response
 
 /** Manual Attendance Override */
 export const addManualAttendance = asyncHandler(async (req: Request, res: Response) => {
-  const { staffId } = req.params;
+  const staffId = req.params.staffId as string;
   const { date, status, workingHours } = req.body;
   const attendance = await staffService.saveManualAttendance(staffId, {
     date: new Date(date),
@@ -173,7 +173,7 @@ export const addManualAttendance = asyncHandler(async (req: Request, res: Respon
 
 /** Document replacement with archiving old history logs */
 export const uploadDocument = asyncHandler(async (req: Request, res: Response) => {
-  const { staffId } = req.params;
+  const staffId = req.params.staffId as string;
   const { docType, docNumber, imageUrl, expiryDate } = req.body;
 
   const oldDoc = await prisma.staffDocument.findFirst({

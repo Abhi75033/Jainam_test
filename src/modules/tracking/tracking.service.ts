@@ -89,12 +89,19 @@ export async function startJourney(routeId: string) {
   return journey;
 }
 
-export async function recordJourneyEvent(journeyId: string, input: { type: 'DEPARTURE' | 'ARRIVAL' | 'DELAY' | 'MANUAL_UPDATE'; templeId?: string; note?: string; createdById: string }) {
+export async function recordJourneyEvent(journeyId: string, input: { type: 'DEPARTURE' | 'ARRIVAL' | 'DELAY' | 'MANUAL_UPDATE'; templeId?: string; note?: string; createdById: string; timestamp?: string }) {
   const journey = await prisma.journey.findUnique({ where: { id: journeyId }, include: { route: true, monk: true } });
   if (!journey) throw ApiError.notFound('Journey not found');
 
   const event = await prisma.journeyEvent.create({
-    data: { journeyId, type: input.type, templeId: input.templeId, note: input.note, createdById: input.createdById },
+    data: { 
+      journeyId, 
+      type: input.type, 
+      templeId: input.templeId, 
+      note: input.note, 
+      createdById: input.createdById,
+      timestamp: input.timestamp ? new Date(input.timestamp) : undefined,
+    },
   });
 
   const stops = (journey.route.stops as any[]) ?? [];

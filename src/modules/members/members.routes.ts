@@ -58,18 +58,13 @@ memberRoutes.get('/import-template', requireAuth, membersController.downloadImpo
 
 memberRoutes.get('/:publicId', requireAuth, membersController.getMemberByPublicId);
 
-// ─── Admin: update any member profile — SUPER ADMIN ONLY (§5.2) ─────────────
+// ─── Admin: update any member profile (MEMBERS:EDIT) ────────────────────────
+// B1 Fix: Removed hard Super Admin gate — org-admins with MEMBERS:EDIT can edit.
+// Super Admin can still edit any member; org-admins edit within their org scope.
 memberRoutes.patch(
   '/:publicId',
   requireAuth,
   requirePermission('MEMBERS', 'EDIT'),
-  (req, _res, next) => {
-    // Only Super Admin may edit another member's profile (spec §5.2)
-    if (!req.actor!.isSuperAdmin) {
-      throw Object.assign(new Error('Only Super Admin can edit member profiles'), { statusCode: 403 });
-    }
-    next();
-  },
   validate(updateMemberProfileSchema),
   membersController.adminUpdateMember,
 );

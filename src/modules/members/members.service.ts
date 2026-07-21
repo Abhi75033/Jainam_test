@@ -84,6 +84,7 @@ interface RegisterMemberInput {
   consents?: { consentType: string; guardianName?: string }[];
   govtDocuments?: { docType: string; docNumber: string; imageUrl?: string }[];
   interests?: string[];
+  familyMembers?: { fullName?: string; name?: string; relationship: string; mobile: string }[];
 }
 
 const ADMIN_ROLES = ['SUPER_ADMIN', 'TEMPLE_ADMIN', 'DHARAMSHALA_ADMIN', 'JAIN_CENTER_ADMIN', 'MONK_ADMIN'];
@@ -221,11 +222,33 @@ export async function registerMember(input: RegisterMemberInput) {
 }
 
 export async function getMemberByUserId(userId: string) {
-  return prisma.member.findUnique({ where: { userId }, include: { privacySetting: true } });
+  return prisma.member.findUnique({
+    where: { userId },
+    include: {
+      privacySetting: true,
+      familyAsPrimary: {
+        include: {
+          relatedMember: true,
+          relationshipType: true,
+        },
+      },
+    },
+  });
 }
 
 export async function getMemberByPublicId(publicId: string) {
-  return prisma.member.findUnique({ where: { publicId }, include: { privacySetting: true } });
+  return prisma.member.findUnique({
+    where: { publicId },
+    include: {
+      privacySetting: true,
+      familyAsPrimary: {
+        include: {
+          relatedMember: true,
+          relationshipType: true,
+        },
+      },
+    },
+  });
 }
 
 export async function updateMemberProfile(memberId: string, input: Partial<RegisterMemberInput>) {
@@ -274,7 +297,140 @@ export async function updateMemberProfile(memberId: string, input: Partial<Regis
   });
 
   const completion = computeProfileCompletionPct(updated);
-  return prisma.member.update({ where: { id: memberId }, data: { profileCompletionPct: completion } });
+  const finalUpdated = await prisma.member.update({
+    where: { id: memberId },
+    data: { profileCompletionPct: completion },
+    include: {
+      privacySetting: true,
+      familyAsPrimary: {
+        include: {
+          relatedMember: true,
+          relationshipType: true,
+        },
+      },
+    },
+  });
+
+  if (input.familyMembers) {
+    await syncFamilyMembers(memberId, input.familyMembers);
+    // Reload updated to have the newly synced family members
+    return prisma.member.findUniqueOrThrow({
+      where: { id: memberId },
+      include: {
+        privacySetting: true,
+        familyAsPrimary: {
+          include: {
+            relatedMember: true,
+            relationshipType: true,
+          },
+        },
+      },
+    });
+  }
+
+  return finalUpdated;
+}
+
+export async function syncFamilyMembers(primaryMemberId: string, familyMembersInput: any[]) {
+  if (!familyMembersInput) return;
+  const primary = await prisma.member.findUniqueOrThrow({ where: { id: primaryMemberId } });
+
+  // Delete all existing family links for this member to start fresh
+  await prisma.familyMember.deleteMany({
+    where: { primaryMemberId },
+  });
+
+  const { enqueueNotification } = await import('@/engines/notification/notification.service');
+
+  for (const item of familyMembersInput) {
+    const mobile = item.mobile;
+    const name = item.fullName || item.name;
+    const relName = item.relationship || item.relation;
+    if (!mobile || !name || !relName) continue;
+
+    // 1. Find or create relationship type
+    let relType = await prisma.relationshipType.findFirst({
+      where: { name: { equals: relName, mode: 'insensitive' } },
+    });
+    if (!relType) {
+      relType = await prisma.relationshipType.create({
+        data: { name: relName },
+      });
+    }
+
+    // 2. Find or create related user/member
+    let relatedUser = await prisma.user.findUnique({
+      where: { mobile },
+      include: { member: true },
+    });
+
+    let relatedMemberId: string;
+    let relatedUserId: string;
+    let isNewAccount = false;
+
+    if (relatedUser?.member) {
+      relatedMemberId = relatedUser.member.id;
+      relatedUserId = relatedUser.id;
+    } else if (relatedUser && !relatedUser.member) {
+      // Continue or skip if user exists without member profile
+      continue;
+    } else {
+      const prefix = primary.category === 'JAIN' ? 'JAIN_MEMBER' : 'NON_JAIN_MEMBER';
+      const created = await prisma.$transaction(async (tx) => {
+        const publicId = await nextPublicId(prefix, tx);
+        const user = await tx.user.create({
+          data: {
+            mobile,
+            publicId,
+            status: 'PENDING_OTP',
+            primaryRoleKey: primary.category === 'NON_JAIN' ? 'NON_JAIN_MEMBER' : 'MEMBER',
+            createdByAdmin: true,
+          },
+        });
+        const member = await tx.member.create({
+          data: {
+            userId: user.id,
+            publicId,
+            category: primary.category,
+            firstName: name,
+            fullName: name,
+            mobile,
+            communityId: primary.communityId,
+            status: 'INACTIVE',
+            isAutoCreated: true,
+          },
+        });
+        return { member, userId: user.id };
+      });
+      await seedDefaultPreferences(created.member.id);
+      relatedMemberId = created.member.id;
+      relatedUserId = created.userId;
+      isNewAccount = true;
+    }
+
+    // 3. Create link
+    await prisma.familyMember.create({
+      data: {
+        primaryMemberId,
+        relatedMemberId,
+        relationshipTypeId: relType.id,
+      },
+    });
+
+    if (isNewAccount) {
+      try {
+        await enqueueNotification({
+          userId: relatedUserId,
+          templateKey: 'FAMILY_MEMBER_ADDED',
+          category: 'SERVICE',
+          to: { WHATSAPP: mobile, SMS: mobile },
+          body: `${primary.fullName} added you as a family member on JiNANAM. Download the app to activate your account: https://jinanam.app/download`,
+        });
+      } catch (err) {
+        console.error('Failed to enqueue family notification:', err);
+      }
+    }
+  }
 }
 
 // -----------------------------------------------------------------------------

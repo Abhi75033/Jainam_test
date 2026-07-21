@@ -13,7 +13,7 @@ export function serializeMemberPublic(member: Member) {
 }
 
 /** Fuller view for the owning member themselves, or an admin with MEMBERS:VIEW in their org. */
-export function serializeMemberFull(member: Member, privacy?: MemberPrivacySetting | null) {
+export function serializeMemberFull(member: any, privacy?: MemberPrivacySetting | null) {
   return {
     publicId: member.publicId,
     category: member.category,
@@ -48,5 +48,11 @@ export function serializeMemberFull(member: Member, privacy?: MemberPrivacySetti
     profileCompletionPct: member.profileCompletionPct,
     currencyCode: member.currencyCode,
     createdAt: member.createdAt,
+    familyMembers: member.familyMembers?.map((fm: any) => ({
+      id: fm.id,
+      fullName: fm.relatedMember?.fullName || fm.relatedMember?.firstName || '',
+      relationship: fm.relationshipType?.name || fm.relationshipTypeId,
+      mobile: fm.relatedMember?.mobile || '',
+    })) || [],
   };
 }

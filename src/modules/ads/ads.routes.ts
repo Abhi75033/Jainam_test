@@ -4,6 +4,7 @@ import { requireAuth, requireRole } from '@/middlewares/auth';
 import { validate } from '@/middlewares/validate';
 import { asyncHandler } from '@/utils/asyncHandler';
 import { ok, created } from '@/utils/apiResponse';
+import { ApiError } from '@/utils/ApiError';
 import { prisma } from '@/config/prisma';
 
 const createAdSchema = z.object({
@@ -21,6 +22,9 @@ const createAdSchema = z.object({
       .optional(),
     startAt: z.coerce.date(),
     endAt: z.coerce.date(),
+    pricingModel: z.enum(['FLAT', 'CPC', 'CPM']).optional(),
+    priceRate: z.number().nonnegative().optional(),
+    totalCost: z.number().nonnegative().optional(),
   }),
 });
 
@@ -35,7 +39,28 @@ adRoutes.post(
   requireRole('SUPER_ADMIN'),
   validate(createAdSchema),
   asyncHandler(async (req: Request, res: Response) => {
-    const ad = await prisma.ad.create({ data: { ...req.body, createdById: req.actor!.userId } });
+    const start = new Date(req.body.startAt);
+    const end = new Date(req.body.endAt);
+    if (end <= start) {
+      throw ApiError.validation({ endAt: ['End date must be after start date'] });
+    }
+    const pricingModel = req.body.pricingModel || 'FLAT';
+    const priceRate = req.body.priceRate || 0;
+    let totalCost = req.body.totalCost || 0;
+    
+    if (pricingModel === 'FLAT') {
+      const msDiff = end.getTime() - start.getTime();
+      const days = Math.ceil(msDiff / (1000 * 60 * 60 * 24)) || 1;
+      totalCost = priceRate * days;
+    }
+
+    const ad = await prisma.ad.create({
+      data: {
+        ...req.body,
+        totalCost,
+        createdById: req.actor!.userId,
+      },
+    });
     return created(res, ad);
   }),
 );
@@ -61,7 +86,33 @@ adRoutes.patch(
   requireRole('SUPER_ADMIN'),
   validate(updateAdSchema),
   asyncHandler(async (req: Request, res: Response) => {
-    const ad = await prisma.ad.update({ where: { id: req.params.adId as string }, data: req.body });
+    const adId = req.params.adId as string;
+    const existing = await prisma.ad.findUnique({ where: { id: adId } });
+    if (!existing) throw ApiError.notFound('Ad not found.');
+
+    const start = req.body.startAt ? new Date(req.body.startAt) : new Date(existing.startAt);
+    const end = req.body.endAt ? new Date(req.body.endAt) : new Date(existing.endAt);
+    if (end <= start) {
+      throw ApiError.validation({ endAt: ['End date must be after start date'] });
+    }
+
+    const pricingModel = req.body.pricingModel || existing.pricingModel;
+    const priceRate = req.body.priceRate !== undefined ? req.body.priceRate : existing.priceRate;
+    let totalCost = req.body.totalCost !== undefined ? req.body.totalCost : existing.totalCost;
+
+    if (pricingModel === 'FLAT') {
+      const msDiff = end.getTime() - start.getTime();
+      const days = Math.ceil(msDiff / (1000 * 60 * 60 * 24)) || 1;
+      totalCost = priceRate * days;
+    }
+
+    const ad = await prisma.ad.update({
+      where: { id: adId },
+      data: {
+        ...req.body,
+        totalCost,
+      },
+    });
     return ok(res, ad);
   }),
 );

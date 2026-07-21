@@ -41,6 +41,7 @@ export async function createAutoFeedCard(input: {
   description?: string;
   coverUrl?: string;
   visibilityConfig?: Record<string, unknown>;
+  categoryId?: string;
 }) {
   return prisma.feedPost.create({
     data: {
@@ -52,6 +53,7 @@ export async function createAutoFeedCard(input: {
       description: input.description,
       coverUrl: input.coverUrl,
       visibilityConfig: input.visibilityConfig as Prisma.InputJsonValue,
+      categoryId: input.categoryId,
     },
   });
 }

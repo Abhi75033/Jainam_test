@@ -179,18 +179,42 @@ export async function loginWithPassword(input: { mobile: string; password: strin
     throw ApiError.unauthorized('Invalid mobile number or password');
   }
 
-  const valid = await bcrypt.compare(input.password, user.passwordHash);
-  if (!valid) {
-    await prisma.loginHistory.create({
-      data: { userId: user.id, mobile: input.mobile, deviceId, ip: input.device.ip, success: false, reason: 'INVALID_CREDENTIALS' },
-    });
-    throw ApiError.unauthorized('Invalid mobile number or password');
+  // Check if account is locked out
+  if (user.lockoutUntil && user.lockoutUntil > new Date()) {
+    const minutesLeft = Math.ceil((user.lockoutUntil.getTime() - Date.now()) / (1000 * 60));
+    throw ApiError.forbidden(`Account is temporarily locked due to too many failed login attempts. Try again in ${minutesLeft} minutes.`);
   }
 
   if (['SUSPENDED', 'BLOCKED', 'DELETED'].includes(user.status)) {
     throw ApiError.forbidden(`Account is ${user.status.toLowerCase()}. Contact support.`);
   }
 
+  const valid = await bcrypt.compare(input.password, user.passwordHash);
+  if (!valid) {
+    const newAttempts = user.failedLoginAttempts + 1;
+    const isLocking = newAttempts >= 5;
+    const lockoutUntil = isLocking ? new Date(Date.now() + 15 * 60 * 1000) : null;
+    
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        failedLoginAttempts: isLocking ? 0 : newAttempts,
+        lockoutUntil,
+      },
+    });
+
+    await prisma.loginHistory.create({
+      data: { userId: user.id, mobile: input.mobile, deviceId, ip: input.device.ip, success: false, reason: isLocking ? 'LOCKED_OUT' : 'INVALID_CREDENTIALS' },
+    });
+
+    if (isLocking) {
+      throw ApiError.forbidden('Too many failed attempts. Account has been locked for 15 minutes.');
+    } else {
+      throw ApiError.unauthorized(`Invalid mobile number or password. Attempt ${newAttempts} of 5.`);
+    }
+  }
+
+  // Reset lockout counters on success
   const suspicious = await flagSuspiciousIfNeeded(user.id, input.mobile);
   const { accessToken, refreshToken } = await issueTokensForUser(user, input.device);
 
@@ -198,7 +222,14 @@ export async function loginWithPassword(input: { mobile: string; password: strin
     prisma.loginHistory.create({
       data: { userId: user.id, mobile: input.mobile, deviceId, ip: input.device.ip, success: true, flaggedSuspicious: suspicious },
     }),
-    prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } }),
+    prisma.user.update({ 
+      where: { id: user.id }, 
+      data: { 
+        lastLoginAt: new Date(),
+        failedLoginAttempts: 0,
+        lockoutUntil: null
+      } 
+    }),
   ]);
 
   return { user, accessToken, refreshToken, suspicious };

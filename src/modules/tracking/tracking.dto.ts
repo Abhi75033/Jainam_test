@@ -27,6 +27,7 @@ export const journeyEventSchema = z.object({
     type: z.enum(['DEPARTURE', 'ARRIVAL', 'DELAY', 'MANUAL_UPDATE']),
     templeId: z.string().optional(),
     note: z.string().optional(),
+    timestamp: z.string().optional(),
   }),
 });
 

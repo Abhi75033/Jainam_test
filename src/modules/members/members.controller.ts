@@ -22,13 +22,13 @@ export const registerNonJainMember = asyncHandler(async (req: Request, res: Resp
 });
 
 export const getMyProfile = asyncHandler(async (req: Request, res: Response) => {
-  const member = await membersService.getMemberByUserId(req.actor!.userId);
+  const member = await membersService.getMemberByUserId(req.actor!.userId) as any;
   if (!member) throw ApiError.notFound('Member profile not found');
   return ok(res, serializeMemberFull(member, member.privacySetting));
 });
 
 export const updateMyProfile = asyncHandler(async (req: Request, res: Response) => {
-  const member = await membersService.getMemberByUserId(req.actor!.userId);
+  const member = await membersService.getMemberByUserId(req.actor!.userId) as any;
   if (!member) throw ApiError.notFound('Member profile not found');
 
   const before = { ...member };
@@ -49,7 +49,7 @@ export const updateMyProfile = asyncHandler(async (req: Request, res: Response) 
 });
 
 export const getMemberByPublicId = asyncHandler(async (req: Request, res: Response) => {
-  const member = await membersService.getMemberByPublicId(req.params.publicId as string);
+  const member = await membersService.getMemberByPublicId(req.params.publicId as string) as any;
   if (!member) throw ApiError.notFound('Member not found');
 
   const isSelf = member.userId === req.actor!.userId;
@@ -137,6 +137,11 @@ export const adminCreateMember = asyncHandler(async (req: Request, res: Response
     });
   });
 
+  const { familyMembers } = req.body;
+  if (familyMembers && Array.isArray(familyMembers)) {
+    await membersService.syncFamilyMembers(member.id, familyMembers);
+  }
+
   const { enqueueNotification } = await import('@/engines/notification/notification.service');
   await enqueueNotification({
     userId: member.userId,
@@ -153,12 +158,31 @@ export const adminCreateMember = asyncHandler(async (req: Request, res: Response
 
 /** Admin member register list (MEMBERS:VIEW) — paginated, searchable by name/mobile/publicId. */
 export const listMembers = asyncHandler(async (req: Request, res: Response) => {
-  const { q, category, status, page = '1', pageSize = '20' } = req.query as Record<string, string>;
+  const {
+    q, category, status, excludeStaff,
+    page = '1', pageSize = '20',
+  } = req.query as Record<string, string>;
   const take = Math.min(parseInt(pageSize) || 20, 100);
   const skip = ((parseInt(page) || 1) - 1) * take;
 
   const where: any = { deletedAt: null };
-  if (category && category !== 'ALL') where.category = category;
+
+  // Category filter
+  if (category && category !== 'ALL') {
+    // Support comma-separated category list (e.g. "JAIN,NON_JAIN")
+    const cats = category.split(',').map((c) => c.trim()).filter(Boolean);
+    where.category = cats.length === 1 ? cats[0] : { in: cats };
+  }
+
+  // B7 Fix: excludeStaff=true removes STAFF records from member-link dropdowns
+  if (excludeStaff === 'true') {
+    where.isStaff = false; // staff members have isStaff=true
+    // Also filter by category to be safe: only JAIN and NON_JAIN
+    if (!where.category) {
+      where.category = { in: ['JAIN', 'NON_JAIN'] };
+    }
+  }
+
   if (status && status !== 'ALL') where.status = status;
   if (q) {
     where.OR = [
@@ -174,9 +198,9 @@ export const listMembers = asyncHandler(async (req: Request, res: Response) => {
       where,
       select: {
         id: true, userId: true, publicId: true, fullName: true, photoUrl: true, category: true,
-        mobile: true, email: true, status: true, isVolunteer: true,
+        mobile: true, email: true, status: true, isVolunteer: true, isAutoCreated: true,
         profileCompletionPct: true, createdAt: true, dob: true,
-        currentAddress: true,                          // JSON scalar — select whole field
+        currentAddress: true,
         community: { select: { name: true } },
       },
       orderBy: { createdAt: 'desc' },

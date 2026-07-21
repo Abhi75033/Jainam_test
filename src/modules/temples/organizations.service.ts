@@ -70,11 +70,25 @@ export async function createOrganization(input: Record<string, unknown> & { type
 
 export async function updateOrganization(organizationId: string, input: Record<string, unknown>, updatedById: string) {
   const { bankAccount, ...rest } = input as any;
+
+  // B3 Fix: Convert empty-string FK relation IDs to null/undefined to prevent
+  // Prisma FK constraint violations (e.g., mulNayakBhagwanId: "" → undefined).
+  const FK_RELATION_FIELDS = [
+    'mulNayakBhagwanId', 'communityId', 'subCommunityId', 'gacchaId',
+    'tithiCalendarTypeId', 'createdById', 'updatedById',
+  ];
+  const cleanedRest = { ...rest };
+  for (const field of FK_RELATION_FIELDS) {
+    if (Object.prototype.hasOwnProperty.call(cleanedRest, field) && cleanedRest[field] === '') {
+      cleanedRest[field] = null; // null disconnects the relation safely
+    }
+  }
+
   const org = await prisma.organization.update({
     where: { id: organizationId },
     data: {
-      ...rest,
-      facilities: rest.facilities as Prisma.InputJsonValue,
+      ...cleanedRest,
+      facilities: cleanedRest.facilities as Prisma.InputJsonValue,
       ...(bankAccount ? { bankAccountEncrypted: encryptField(bankAccount) } : {}),
       updatedById,
       updatedAt: new Date(),

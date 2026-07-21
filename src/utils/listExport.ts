@@ -19,5 +19,6 @@ export async function sendListExport(
 }
 
 export function parseExportFormat(raw: unknown): ExportFormat {
-  return raw === 'pdf' || raw === 'excel' || raw === 'csv' ? raw : 'csv';
+  if (raw === 'xlsx' || raw === 'excel') return 'excel';
+  return raw === 'pdf' ? 'pdf' : 'csv';
 }

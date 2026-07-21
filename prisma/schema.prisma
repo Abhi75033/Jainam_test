@@ -96,6 +96,8 @@ model User {
   createdByAdmin     Boolean    @default(false) // admins/staff are never self-registered
   createdAt          DateTime   @default(now())
   updatedAt          DateTime   @updatedAt
+  failedLoginAttempts  Int        @default(0)
+  lockoutUntil         DateTime?
   deletedAt          DateTime?
   deletedById        String?
 
@@ -221,7 +223,10 @@ model AuditLog {
   entityId       String?
   before         Json?
   after          Json?
+  diff           Json?
   ip             String?
+  ipAddress      String?
+  userAgent      String?
   deviceInfo     Json?
   isCritical     Boolean  @default(false)
   createdAt      DateTime @default(now())
@@ -2404,18 +2409,21 @@ enum AdSlot {
 }
 
 model Ad {
-  id          String   @id @default(cuid())
-  bannerUrl   String
-  targetLink  String?
-  slot        AdSlot
-  targeting   Json? // { all: bool, cities: [], states: [], countries: [] }
-  startAt     DateTime
-  endAt       DateTime
-  isActive    Boolean  @default(true)
-  viewCount   Int      @default(0)
-  clickCount  Int      @default(0)
-  createdById String?
-  createdAt   DateTime @default(now())
+  id           String   @id @default(cuid())
+  bannerUrl    String
+  targetLink   String?
+  slot         AdSlot
+  targeting    Json? // { all: bool, cities: [], states: [], countries: [] }
+  startAt      DateTime
+  endAt        DateTime
+  isActive     Boolean  @default(true)
+  pricingModel String   @default("FLAT") // FLAT, CPC, CPM
+  priceRate    Float    @default(0)
+  totalCost    Float    @default(0)
+  viewCount    Int      @default(0)
+  clickCount   Int      @default(0)
+  createdById  String?
+  createdAt    DateTime @default(now())
 
   @@map("ads")
 }
@@ -2824,6 +2832,7 @@ model AppBanner {
   redirectUrl String?
   displayOrder Int       @default(0)
   isActive    Boolean   @default(true)
+  deviceType  String    @default("MOBILE")
   createdById String?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt

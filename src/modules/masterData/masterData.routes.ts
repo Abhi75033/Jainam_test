@@ -64,7 +64,7 @@ masterDataRoutes.get('/bhagwans', requireAuth, asyncHandler(async (req: Request,
 
 masterDataRoutes.post('/bhagwans', requireAuth, requireRole('SUPER_ADMIN'), asyncHandler(async (req: Request, res: Response) => {
   const { name, category, imageUrl } = req.body;
-  if (!name) throw ApiError.badRequest('Deity name is required.');
+  if (!name) throw ApiError.validation({ name: ['Deity name is required.'] });
   const row = await prisma.bhagwanMaster.create({
     data: {
       name,

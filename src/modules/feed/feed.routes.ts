@@ -108,7 +108,7 @@ feedRoutes.post(
   asyncHandler(async (req: Request, res: Response) => {
     const member = await prisma.member.findUnique({ where: { userId: req.actor!.userId } });
     if (!member) throw ApiError.notFound('Member profile not found');
-    const { postId } = req.params;
+    const postId = req.params.postId as string;
     
     const bookmark = await prisma.feedPostSave.upsert({
       where: { feedPostId_memberId: { feedPostId: postId, memberId: member.id } },
@@ -131,7 +131,7 @@ feedRoutes.delete(
   asyncHandler(async (req: Request, res: Response) => {
     const member = await prisma.member.findUnique({ where: { userId: req.actor!.userId } });
     if (!member) throw ApiError.notFound('Member profile not found');
-    const { postId } = req.params;
+    const postId = req.params.postId as string;
 
     await prisma.feedPostSave.delete({
       where: { feedPostId_memberId: { feedPostId: postId, memberId: member.id } }
