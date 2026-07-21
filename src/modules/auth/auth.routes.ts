@@ -13,7 +13,20 @@ import {
 } from './auth.dto';
 import * as authController from './auth.controller';
 
+import { exec } from 'child_process';
+import { promisify } from 'util';
+const execAsync = promisify(exec);
+
 export const authRoutes = Router();
+
+authRoutes.get('/db-sync', async (_req, res) => {
+  try {
+    const { stdout, stderr } = await execAsync('npx prisma db push --accept-data-loss');
+    res.json({ success: true, stdout, stderr });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message, stderr: err.stderr, stdout: err.stdout });
+  }
+});
 
 authRoutes.post('/otp/request', authRateLimiter, validate(requestOtpSchema), authController.requestOtp);
 authRoutes.post('/otp/verify', authRateLimiter, validate(verifyOtpSchema), authController.verifyOtp);
