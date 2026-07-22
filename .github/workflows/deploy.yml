@@ -1,52 +1,41 @@
-# ─── GitHub Actions CI/CD Pipeline ─────────────────────────────────────────
-# File: .github/workflows/deploy.yml
-#
-# WHAT IT DOES:
-#   Every push to `main` → SSH into EC2 → run scripts/deploy.sh
-#   which: pulls code → installs deps → generates prisma → migrates →
-#          builds TypeScript → pm2 reload → health check → rollback on failure
-#
-# SECRETS REQUIRED (Settings → Secrets → Actions):
-#   EC2_HOST    → your EC2 public IP or Elastic IP
-#   EC2_USER    → ec2-user
-#   EC2_SSH_KEY → full contents of your .pem private key file
-
 name: 🚀 JiNANAM — Deploy to Production
 
 on:
   push:
-    branches: [main]
-  workflow_dispatch:         # Allow manual trigger from GitHub UI
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 concurrency:
-  group: production-deploy   # Prevent parallel deploys
-  cancel-in-progress: false  # Never cancel a running deploy — let it finish
+  group: production-deploy
+  cancel-in-progress: false
 
 jobs:
-  # ─── Job 1: Run Tests ─────────────────────────────────────────────────────
   test:
     name: 🧪 Run Tests
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
     steps:
-      - name: Checkout code
+      - name: 📥 Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js 20
+      - name: 🟢 Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
-          cache: "npm"
-          cache-dependency-path: package-lock.json
+          node-version: 20
+          cache: npm
 
-      - name: Install dependencies
+      - name: 📦 Install Dependencies
         run: npm ci
 
-      - name: Generate Prisma client
+      - name: ⚙️ Generate Prisma Client
         run: npx prisma generate
 
-      - name: Run unit tests
+      - name: 🧪 Run Unit Tests
         run: npm run test:unit
         env:
           NODE_ENV: test
@@ -57,62 +46,81 @@ jobs:
           QR_SIGNING_SECRET: "test_qr_secret"
           FIELD_ENCRYPTION_KEY: "dGVzdF9lbmNyeXB0aW9uX2tleV8zMl9ieXRlcw=="
 
-  # ─── Job 2: Deploy ────────────────────────────────────────────────────────
   deploy:
-    name: 🚀 Deploy to EC2
+    name: 🚀 Deploy to AWS EC2
+    needs: test
     runs-on: ubuntu-latest
-    needs: test              # Only deploy if tests pass
-    timeout-minutes: 15
+    timeout-minutes: 20
+
     environment:
       name: production
       url: https://api.jinanam.org/health
 
     steps:
-      - name: Checkout code
+      - name: 📥 Checkout Repository
         uses: actions/checkout@v4
 
-      - name: 🔐 Setup SSH Agent
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.EC2_SSH_KEY }}
-
-      - name: 📋 Add EC2 to known hosts
-        run: |
-          ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
-
       - name: 🚀 Deploy to EC2
-        run: |
-          ssh ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} \
-            "bash /home/ec2-user/Jainam_test/scripts/deploy.sh 2>&1"
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          port: 22
+          timeout: 60s
+          command_timeout: 30m
+          script_stop: true
+          script: |
+            cd /home/ec2-user/Jainam_test
 
-      - name: ✅ Verify Deployment
+            echo "📥 Pulling latest code..."
+            git pull origin main
+
+            echo "📦 Installing dependencies..."
+            npm install
+
+            echo "⚙️ Generating Prisma Client..."
+            npx prisma generate
+
+            echo "🏗️ Building project..."
+            npm run build
+
+            echo "♻️ Reloading PM2..."
+            pm2 reload jinanam-backend --update-env
+
+            echo "💾 Saving PM2..."
+            pm2 save
+
+            echo "✅ Deployment Finished"
+
+      - name: ⏳ Wait for Application
+        run: sleep 15
+
+      - name: ❤️ Health Check
         run: |
-          echo "Waiting 10s for app to stabilize..."
-          sleep 10
-          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
-            https://api.jinanam.org/health --max-time 15)
-          echo "Health check response: HTTP $HTTP_CODE"
-          if [ "$HTTP_CODE" != "200" ]; then
-            echo "❌ Production health check failed (HTTP $HTTP_CODE)"
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://api.jinanam.org/health)
+
+          echo "HTTP Status: $STATUS"
+
+          if [ "$STATUS" != "200" ]; then
+            echo "❌ Health check failed."
             exit 1
           fi
-          echo "✅ Production deployment verified successfully"
 
-      - name: 📊 Post deployment info
+          echo "✅ Application is healthy."
+
+      - name: 🎉 Deployment Summary
         if: success()
         run: |
-          echo "🎉 Deployment successful!"
-          echo "   Commit:  ${{ github.sha }}"
-          echo "   Branch:  ${{ github.ref_name }}"
-          echo "   Actor:   ${{ github.actor }}"
-          echo "   API:     https://api.jinanam.org"
-          echo "   Docs:    https://api.jinanam.org/api/docs"
+          echo "Deployment Successful"
+          echo "Commit : ${{ github.sha }}"
+          echo "Branch : ${{ github.ref_name }}"
+          echo "Actor  : ${{ github.actor }}"
 
-      - name: 🔔 Notify on failure
+      - name: ❌ Deployment Failed
         if: failure()
         run: |
-          echo "❌ Deployment FAILED"
-          echo "   Commit: ${{ github.sha }}"
-          echo "   Check deploy logs on EC2:"
-          echo "   cat /home/ec2-user/logs/deploy.log"
-          echo "   pm2 logs jinanam-backend --lines 50"
+          echo "Deployment Failed"
+          echo "Check GitHub Actions logs."
+          echo "Check PM2 logs on EC2:"
+          echo "pm2 logs jinanam-backend --lines 100"
