@@ -50,16 +50,13 @@ jobs:
     name: 🚀 Deploy to AWS EC2
     needs: test
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
 
     environment:
       name: production
       url: https://api.jinanam.org/health
 
     steps:
-      - name: 📥 Checkout Repository
-        uses: actions/checkout@v4
-
       - name: 🚀 Deploy to EC2
         uses: appleboy/ssh-action@v1.2.0
         with:
@@ -68,21 +65,25 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           port: 22
           timeout: 60s
-          command_timeout: 30m
+          command_timeout: 40m
           script_stop: true
           script: |
+            set -e
+
             cd /home/ec2-user/Jainam_test
 
             echo "📥 Pulling latest code..."
-            git pull origin main
+            git fetch origin
+            git reset --hard origin/main
 
             echo "📦 Installing dependencies..."
-            npm install
+            npm ci
 
             echo "⚙️ Generating Prisma Client..."
             npx prisma generate
 
             echo "🏗️ Building project..."
+            export NODE_OPTIONS="--max-old-space-size=2048"
             npm run build
 
             echo "♻️ Reloading PM2..."
@@ -91,36 +92,43 @@ jobs:
             echo "💾 Saving PM2..."
             pm2 save
 
+            echo "📊 PM2 Status"
+            pm2 status
+
             echo "✅ Deployment Finished"
 
       - name: ⏳ Wait for Application
-        run: sleep 15
+        run: sleep 20
 
       - name: ❤️ Health Check
         run: |
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://api.jinanam.org/health)
+          for i in {1..5}; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://api.jinanam.org/health || true)
 
-          echo "HTTP Status: $STATUS"
+            echo "Attempt $i : HTTP $STATUS"
 
-          if [ "$STATUS" != "200" ]; then
-            echo "❌ Health check failed."
-            exit 1
-          fi
+            if [ "$STATUS" = "200" ]; then
+              echo "✅ Application is healthy."
+              exit 0
+            fi
 
-          echo "✅ Application is healthy."
+            sleep 5
+          done
+
+          echo "❌ Health check failed."
+          exit 1
 
       - name: 🎉 Deployment Summary
         if: success()
         run: |
-          echo "Deployment Successful"
+          echo "✅ Deployment Successful"
           echo "Commit : ${{ github.sha }}"
           echo "Branch : ${{ github.ref_name }}"
           echo "Actor  : ${{ github.actor }}"
+          echo "API    : https://api.jinanam.org"
 
       - name: ❌ Deployment Failed
         if: failure()
         run: |
-          echo "Deployment Failed"
-          echo "Check GitHub Actions logs."
-          echo "Check PM2 logs on EC2:"
-          echo "pm2 logs jinanam-backend --lines 100"
+          echo "❌ Deployment Failed"
+          echo "Review GitHub Actions logs."
