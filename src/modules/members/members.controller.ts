@@ -171,7 +171,7 @@ export const adminCreateMember = asyncHandler(async (req: Request, res: Response
         currentAddress: currentAddress ? (currentAddress as Prisma.InputJsonValue) : undefined,
         permanentAddress: permanentAddress ? (permanentAddress as Prisma.InputJsonValue) : undefined,
         sameAsPermanent: !!sameAsPermanent,
-        nativeVillage: nativeVillage ? (nativeVillage as Prisma.InputJsonValue) : undefined,
+        nativeVillage: nativeVillage || undefined,
         bloodGroup: bloodGroup || undefined,
         disability: disability || undefined,
         medicalNotes: medicalNotes || undefined,

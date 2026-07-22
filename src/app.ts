@@ -14,6 +14,7 @@ import { auditTrail } from '@/middlewares/auditTrail';
 import { swaggerSpec } from '@/config/swagger';
 import { generateOpenApiPaths } from '@/config/openapiPaths';
 import { registerRoutes } from '@/routes';
+import packageJson from '../package.json';
 
 export function createApp(): Express {
   const app = express();
@@ -37,7 +38,18 @@ export function createApp(): Express {
   app.use(globalRateLimiter);
   app.use(auditTrail); // §4.4: blanket audit net over every mutating request
 
-  app.get('/health', (_req, res) => res.status(200).json({ success: true, data: { status: 'ok' } }));
+  app.get('/health', (_req, res) => {
+    return res.status(200).json({
+      success: true,
+      data: {
+        status: 'ok',
+        message: 'JiNANAM API is running smoothly',
+        version: packageJson.version,
+        deployedAt: new Date().toISOString(),
+        environment: env.NODE_ENV,
+      },
+    });
+  });
 
   registerRoutes(app);
 
