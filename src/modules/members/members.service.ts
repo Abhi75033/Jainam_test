@@ -237,7 +237,7 @@ export async function getMemberByUserId(userId: string) {
 }
 
 export async function getMemberByPublicId(publicId: string) {
-  return prisma.member.findUnique({
+  const member = await prisma.member.findUnique({
     where: { publicId },
     include: {
       privacySetting: true,
@@ -249,6 +249,23 @@ export async function getMemberByPublicId(publicId: string) {
       },
     },
   });
+
+  if (!member) {
+    return prisma.member.findUnique({
+      where: { id: publicId },
+      include: {
+        privacySetting: true,
+        familyAsPrimary: {
+          include: {
+            relatedMember: true,
+            relationshipType: true,
+          },
+        },
+      },
+    });
+  }
+
+  return member;
 }
 
 export async function updateMemberProfile(memberId: string, input: Partial<RegisterMemberInput>) {
@@ -258,9 +275,20 @@ export async function updateMemberProfile(memberId: string, input: Partial<Regis
     ? [input.firstName ?? existing.firstName, input.middleName ?? existing.middleName, input.surname ?? existing.surname].filter(Boolean).join(' ')
     : existing.fullName;
 
+  let aadhaarHash: string | undefined = undefined;
+  if (input.aadhaar) {
+    const hash = hashForLookup(input.aadhaar);
+    const dup = await prisma.member.findFirst({ where: { aadhaarHash: hash, NOT: { id: memberId } } });
+    if (dup) throw ApiError.conflict('A member with this Aadhaar number already exists');
+    aadhaarHash = hash;
+  }
+
   const updated = await prisma.member.update({
     where: { id: memberId },
     data: {
+      panEncrypted: input.pan ? encryptField(input.pan) : undefined,
+      aadhaarEncrypted: input.aadhaar ? encryptField(input.aadhaar) : undefined,
+      aadhaarHash,
       firstName: input.firstName,
       middleName: input.middleName,
       surname: input.surname,

@@ -1,4 +1,5 @@
 import { Member, MemberPrivacySetting } from '@prisma/client';
+import { decryptField } from '@/utils/encryption';
 
 /** §5.2 privacy rule: "Other members can only ever see name + city/state of a member." */
 export function serializeMemberPublic(member: Member) {
@@ -45,6 +46,8 @@ export function serializeMemberFull(member: any, privacy?: MemberPrivacySetting 
     profession: member.profession,
     isVolunteer: member.isVolunteer,
     status: member.status,
+    pan: member.panEncrypted ? decryptField(member.panEncrypted) : null,
+    aadhaar: member.aadhaarEncrypted ? decryptField(member.aadhaarEncrypted) : null,
     profileCompletionPct: member.profileCompletionPct,
     currencyCode: member.currencyCode,
     createdAt: member.createdAt,

@@ -16,7 +16,7 @@ const createPlanSchema = z.object({
     price: z.coerce.number().min(0),
     currency: z.string().optional(),
     duration: z.enum(['Monthly', 'Annual', 'Lifetime']).optional(),
-    features: z.string().min(1),
+    features: z.array(z.string()).min(1),
   }),
 });
 
@@ -26,7 +26,7 @@ const updatePlanSchema = z.object({
     price: z.coerce.number().min(0).optional(),
     currency: z.string().optional(),
     duration: z.enum(['Monthly', 'Annual', 'Lifetime']).optional(),
-    features: z.string().optional(),
+    features: z.array(z.string()).optional(),
     isActive: z.boolean().optional(),
   }),
 });

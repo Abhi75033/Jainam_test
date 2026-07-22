@@ -60,7 +60,13 @@ export const addReviewSchema = z.object({ body: z.object({ rating: z.number().in
 export const replyReviewSchema = z.object({ body: z.object({ adminReply: z.string().min(1) }) });
 
 export const addNoticeSchema = z.object({
-  body: z.object({ title: z.string().min(1), body: z.string().min(1), isPinned: z.boolean().optional(), startDate: z.coerce.date().optional(), endDate: z.coerce.date().optional() }),
+  body: z.object({
+    title: z.string().min(1),
+    body: z.string().min(1),
+    isPinned: z.boolean().optional(),
+    startDate: z.preprocess((val) => (val === "" || val === null ? undefined : val), z.coerce.date().optional()),
+    endDate: z.preprocess((val) => (val === "" || val === null ? undefined : val), z.coerce.date().optional()),
+  }),
 });
 
 export const addGalleryImageSchema = z.object({ body: z.object({ imageUrl: z.string().min(1), order: z.number().int().optional() }) });

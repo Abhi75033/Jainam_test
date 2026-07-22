@@ -8,6 +8,8 @@ import { recordAudit, auditContextFromRequest } from '@/engines/audit/audit.serv
 import { prisma } from '@/config/prisma';
 import { nextPublicId } from '@/engines/idGenerator/id.service';
 import ExcelJS from 'exceljs';
+import { encryptField, hashForLookup } from '@/utils/encryption';
+import { Prisma } from '@prisma/client';
 
 export const registerJainMember = asyncHandler(async (req: Request, res: Response) => {
   const user = await prisma.user.findUniqueOrThrow({ where: { id: req.actor!.userId } });
@@ -98,8 +100,26 @@ export const bulkImportMembers = asyncHandler(async (req: Request, res: Response
  * app-download/credentials notification.
  */
 export const adminCreateMember = asyncHandler(async (req: Request, res: Response) => {
-  const { firstName, surname, mobile, email, gender, category = 'JAIN', communityId } = req.body as Record<string, string>;
-  if (!firstName || !mobile) throw ApiError.validation({ firstName: firstName ? [] : ['Required'], mobile: mobile ? [] : ['Required'] });
+  const {
+    firstName, middleName, surname, mobile, email, gender, category = 'JAIN',
+    dob, nationality, pan, aadhaar, maritalStatus,
+    preferredLanguage, motherTongue, communityId, subCommunityId, gacchaId, tithiCalendarTypeId,
+    whatsapp, alternateContact, currentAddress, permanentAddress, sameAsPermanent, nativeVillage,
+    bloodGroup, disability, medicalNotes, emergencyContact, profession, isVolunteer,
+    volunteerAreas, volunteerAvailability
+  } = req.body;
+
+  if (!firstName || !mobile || !middleName || !nationality || !pan || !aadhaar || !maritalStatus) {
+    throw ApiError.validation({
+      firstName: firstName ? [] : ['Required'],
+      middleName: middleName ? [] : ['Required'],
+      mobile: mobile ? [] : ['Required'],
+      nationality: nationality ? [] : ['Required'],
+      pan: pan ? [] : ['Required'],
+      aadhaar: aadhaar ? [] : ['Required'],
+      maritalStatus: maritalStatus ? [] : ['Required']
+    });
+  }
 
   const existing = await prisma.user.findUnique({ where: { mobile } });
   if (existing) throw ApiError.conflict('This mobile number is already registered');
@@ -109,9 +129,13 @@ export const adminCreateMember = asyncHandler(async (req: Request, res: Response
     if (emailExists) throw ApiError.conflict('This email address is already associated with another account. Please use a different email or leave it blank.');
   }
 
+  const aadhaarHash = hashForLookup(aadhaar);
+  const dupAadhaar = await prisma.member.findUnique({ where: { aadhaarHash } });
+  if (dupAadhaar) throw ApiError.conflict('A member with this Aadhaar number already exists');
+
   const { nextPublicId } = await import('@/engines/idGenerator/id.service');
   const prefix = category === 'NON_JAIN' ? 'NON_JAIN_MEMBER' : 'JAIN_MEMBER';
-  const fullName = [firstName, surname].filter(Boolean).join(' ');
+  const fullName = [firstName, middleName, surname].filter(Boolean).join(' ');
 
   const member = await prisma.$transaction(async (tx) => {
     const publicId = await nextPublicId(prefix as 'JAIN_MEMBER' | 'NON_JAIN_MEMBER', tx);
@@ -124,12 +148,38 @@ export const adminCreateMember = asyncHandler(async (req: Request, res: Response
         publicId,
         category: category === 'NON_JAIN' ? 'NON_JAIN' : 'JAIN',
         firstName,
+        middleName: middleName || undefined,
         surname: surname || undefined,
         fullName,
         gender: gender || undefined,
         email: email || undefined,
         mobile,
+        dob: dob ? new Date(dob) : undefined,
+        nationality,
+        panEncrypted: pan ? encryptField(pan) : undefined,
+        aadhaarEncrypted: aadhaar ? encryptField(aadhaar) : undefined,
+        aadhaarHash,
+        maritalStatus,
+        preferredLanguage: preferredLanguage || undefined,
+        motherTongue: motherTongue || undefined,
         communityId: communityId || undefined,
+        subCommunityId: subCommunityId || undefined,
+        gacchaId: gacchaId || undefined,
+        tithiCalendarTypeId: tithiCalendarTypeId || undefined,
+        whatsapp: whatsapp || undefined,
+        alternateContact: alternateContact || undefined,
+        currentAddress: currentAddress ? (currentAddress as Prisma.InputJsonValue) : undefined,
+        permanentAddress: permanentAddress ? (permanentAddress as Prisma.InputJsonValue) : undefined,
+        sameAsPermanent: !!sameAsPermanent,
+        nativeVillage: nativeVillage ? (nativeVillage as Prisma.InputJsonValue) : undefined,
+        bloodGroup: bloodGroup || undefined,
+        disability: disability || undefined,
+        medicalNotes: medicalNotes || undefined,
+        emergencyContact: emergencyContact ? (emergencyContact as Prisma.InputJsonValue) : undefined,
+        profession: profession || undefined,
+        isVolunteer: !!isVolunteer,
+        volunteerAreas: volunteerAreas ? (volunteerAreas as Prisma.InputJsonValue) : undefined,
+        volunteerAvailability: volunteerAvailability || undefined,
         status: 'INACTIVE',
         isAutoCreated: true,
         createdById: req.actor!.userId,

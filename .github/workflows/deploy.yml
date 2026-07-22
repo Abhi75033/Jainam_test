@@ -1,0 +1,118 @@
+# ─── GitHub Actions CI/CD Pipeline ─────────────────────────────────────────
+# File: .github/workflows/deploy.yml
+#
+# WHAT IT DOES:
+#   Every push to `main` → SSH into EC2 → run scripts/deploy.sh
+#   which: pulls code → installs deps → generates prisma → migrates →
+#          builds TypeScript → pm2 reload → health check → rollback on failure
+#
+# SECRETS REQUIRED (Settings → Secrets → Actions):
+#   EC2_HOST    → your EC2 public IP or Elastic IP
+#   EC2_USER    → ec2-user
+#   EC2_SSH_KEY → full contents of your .pem private key file
+
+name: 🚀 JiNANAM — Deploy to Production
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:         # Allow manual trigger from GitHub UI
+
+concurrency:
+  group: production-deploy   # Prevent parallel deploys
+  cancel-in-progress: false  # Never cancel a running deploy — let it finish
+
+jobs:
+  # ─── Job 1: Run Tests ─────────────────────────────────────────────────────
+  test:
+    name: 🧪 Run Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Run unit tests
+        run: npm run test:unit
+        env:
+          NODE_ENV: test
+          DATABASE_URL: "postgresql://test:test@localhost:5432/test"
+          REDIS_URL: "redis://localhost:6379"
+          JWT_ACCESS_SECRET: "test_access_secret_at_least_32_chars_long"
+          JWT_REFRESH_SECRET: "test_refresh_secret_at_least_32_chars_long"
+          QR_SIGNING_SECRET: "test_qr_secret"
+          FIELD_ENCRYPTION_KEY: "dGVzdF9lbmNyeXB0aW9uX2tleV8zMl9ieXRlcw=="
+
+  # ─── Job 2: Deploy ────────────────────────────────────────────────────────
+  deploy:
+    name: 🚀 Deploy to EC2
+    runs-on: ubuntu-latest
+    needs: test              # Only deploy if tests pass
+    timeout-minutes: 15
+    environment:
+      name: production
+      url: https://api.jinanam.org/health
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🔐 Setup SSH Agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.EC2_SSH_KEY }}
+
+      - name: 📋 Add EC2 to known hosts
+        run: |
+          ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
+
+      - name: 🚀 Deploy to EC2
+        run: |
+          ssh ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} \
+            "bash /home/ec2-user/Jainam_test/scripts/deploy.sh 2>&1"
+
+      - name: ✅ Verify Deployment
+        run: |
+          echo "Waiting 10s for app to stabilize..."
+          sleep 10
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+            https://api.jinanam.org/health --max-time 15)
+          echo "Health check response: HTTP $HTTP_CODE"
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "❌ Production health check failed (HTTP $HTTP_CODE)"
+            exit 1
+          fi
+          echo "✅ Production deployment verified successfully"
+
+      - name: 📊 Post deployment info
+        if: success()
+        run: |
+          echo "🎉 Deployment successful!"
+          echo "   Commit:  ${{ github.sha }}"
+          echo "   Branch:  ${{ github.ref_name }}"
+          echo "   Actor:   ${{ github.actor }}"
+          echo "   API:     https://api.jinanam.org"
+          echo "   Docs:    https://api.jinanam.org/api/docs"
+
+      - name: 🔔 Notify on failure
+        if: failure()
+        run: |
+          echo "❌ Deployment FAILED"
+          echo "   Commit: ${{ github.sha }}"
+          echo "   Check deploy logs on EC2:"
+          echo "   cat /home/ec2-user/logs/deploy.log"
+          echo "   pm2 logs jinanam-backend --lines 50"

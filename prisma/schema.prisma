@@ -2866,7 +2866,7 @@ model SubscriptionPlan {
   price       Float     @default(0)
   currency    String    @default("INR")
   duration    String    @default("Monthly") // Monthly | Annual | Lifetime
-  features    String    // Comma-separated or plain text description
+  features    Json
   isActive    Boolean   @default(true)
   createdById String?
   createdAt   DateTime  @default(now())

@@ -20,12 +20,23 @@ export async function createOrganization(input: Record<string, unknown> & { type
 
   const publicId = await prisma.$transaction((tx) => nextPublicId(PREFIX_BY_TYPE[type as OrganizationType], tx));
 
+  const FK_RELATION_FIELDS = [
+    'mulNayakBhagwanId', 'communityId', 'subCommunityId', 'gacchaId',
+    'tithiCalendarTypeId', 'createdById', 'updatedById',
+  ];
+  const cleanedRest = { ...rest };
+  for (const field of FK_RELATION_FIELDS) {
+    if (Object.prototype.hasOwnProperty.call(cleanedRest, field) && cleanedRest[field] === '') {
+      cleanedRest[field] = null;
+    }
+  }
+
   const org = await prisma.organization.create({
     data: {
       publicId,
       type,
-      ...rest,
-      facilities: rest.facilities as Prisma.InputJsonValue,
+      ...cleanedRest,
+      facilities: cleanedRest.facilities as Prisma.InputJsonValue,
       bankAccountEncrypted: bankAccount ? encryptField(bankAccount) : null,
       createdById,
       updatedById: createdById,
@@ -36,7 +47,7 @@ export async function createOrganization(input: Record<string, unknown> & { type
     const { createAutoFeedCard } = await import('@/modules/feed/feed.service');
     const catName = org.type === 'TEMPLE' ? 'Temple Updates' : org.type === 'JAIN_CENTER' ? 'Jain Centre Updates' : 'Dharamshala Updates';
     const categoryRow = await prisma.feedCategory.findUnique({ where: { name: catName } });
-    
+
     const visibilityConfig = {
       isPublic: false,
       community: {
@@ -99,7 +110,7 @@ export async function updateOrganization(organizationId: string, input: Record<s
     const { createAutoFeedCard } = await import('@/modules/feed/feed.service');
     const catName = org.type === 'TEMPLE' ? 'Temple Updates' : org.type === 'JAIN_CENTER' ? 'Jain Centre Updates' : 'Dharamshala Updates';
     const categoryRow = await prisma.feedCategory.findUnique({ where: { name: catName } });
-    
+
     const visibilityConfig = {
       isPublic: false,
       community: {
@@ -141,7 +152,7 @@ export async function getOrganization(organizationId: string) {
       contacts: { include: { member: true } },
       historyEvents: true,
       dhajaRecords: { orderBy: { year: 'desc' } },
-      notices: { where: { deletedAt: null }, orderBy: [{ isPinned: 'desc' }, { createdAt: 'desc' } ] },
+      notices: { where: { deletedAt: null }, orderBy: [{ isPinned: 'desc' }, { createdAt: 'desc' }] },
       socialLinks: true,
     },
   });
@@ -171,7 +182,7 @@ export async function addGalleryImage(organizationId: string, imageUrl: string, 
   const count = await prisma.organizationGalleryImage.count({ where: { organizationId } });
   const max = orgType === 'DHARAMSHALA' ? MAX_DHARAMSHALA_GALLERY_IMAGES : MAX_TEMPLE_GALLERY_IMAGES;
   if (count >= max) throw ApiError.validation({ gallery: [`Maximum ${max} images allowed`] });
-  
+
   const galleryImage = await prisma.organizationGalleryImage.create({ data: { organizationId, imageUrl, order } });
 
   try {
