@@ -168,6 +168,17 @@ export async function createCounterType(name: string) {
   });
 }
 
+/** Rename a counter type (§G6). */
+export async function updateCounterType(id: string, name: string) {
+  const existing = await prisma.counterType.findUnique({ where: { id } });
+  if (!existing || existing.deletedAt) throw ApiError.notFound('Counter type not found.');
+
+  const duplicate = await prisma.counterType.findFirst({ where: { name, deletedAt: null, NOT: { id } } });
+  if (duplicate) throw ApiError.conflict('Counter type with this name already exists.');
+
+  return prisma.counterType.update({ where: { id }, data: { name } });
+}
+
 /** Delete a counter type. */
 export async function deleteCounterType(id: string) {
   const existing = await prisma.counterType.findUnique({

@@ -1,11 +1,11 @@
 import { Router, Request, Response } from 'express';
-import { requireAuth, requireRole } from '@/middlewares/auth';
+import { requireAuth, requireRole, requirePermission } from '@/middlewares/auth';
 import { validate } from '@/middlewares/validate';
 import { asyncHandler } from '@/utils/asyncHandler';
 import { ok } from '@/utils/apiResponse';
 import { prisma } from '@/config/prisma';
-import { addFamilyMemberSchema } from '@/modules/members/members.dto';
-import { addFamilyMember } from '@/modules/members/members.controller';
+import { addFamilyMemberSchema, linkFamilyMembersSchema } from '@/modules/members/members.dto';
+import { addFamilyMember, linkFamilyMembers, listAllFamilyGroups } from '@/modules/members/members.controller';
 
 /**
  * Family Members Management (§5.2). Kept as its own routed module per the
@@ -15,6 +15,12 @@ import { addFamilyMember } from '@/modules/members/members.controller';
 export const familyRoutes = Router();
 
 familyRoutes.post('/', requireAuth, validate(addFamilyMemberSchema), addFamilyMember);
+
+/** Admin-wide family group directory (all members, not just the caller's own). */
+familyRoutes.get('/', requireAuth, requirePermission('FAMILY', 'VIEW'), listAllFamilyGroups);
+
+/** Admin/Super Admin links two already-existing members as family, by public ID. */
+familyRoutes.post('/link', requireAuth, requirePermission('FAMILY', 'CREATE'), validate(linkFamilyMembersSchema), linkFamilyMembers);
 
 /** My family links (both directions). Members without a profile (e.g. Super Admin) get an empty list. */
 familyRoutes.get(

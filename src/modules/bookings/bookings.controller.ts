@@ -17,6 +17,11 @@ export const createBookingItem = asyncHandler(async (req: Request, res: Response
   return created(res, item);
 });
 
+export const listBookingItems = asyncHandler(async (req: Request, res: Response) => {
+  const items = await bookingsService.listBookingItems(req.params.organizationId as string);
+  return ok(res, items);
+});
+
 export const updateBookingItem = asyncHandler(async (req: Request, res: Response) => {
   const item = await bookingsService.updateBookingItem(req.params.itemId as string, req.body, req.actor!.userId);
   return ok(res, item);

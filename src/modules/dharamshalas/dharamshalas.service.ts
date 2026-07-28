@@ -26,6 +26,12 @@ export async function createRoom(wingId: string, input: {
   capacity: number;
   pricePerUnit?: number;
   currency?: string;
+  roomNumber?: string;
+  viewType?: string;
+  bathroomType?: string;
+  bedType?: string;
+  extraMattressCount?: number;
+  extraMattressCharge?: number;
   amenities?: string[];
   images?: string[];
   status?: 'AVAILABLE' | 'UNAVAILABLE' | 'MAINTENANCE';
@@ -40,6 +46,12 @@ export async function createRoom(wingId: string, input: {
       capacity: input.capacity,
       pricePerUnit: input.pricePerUnit ?? 0,
       currency: input.currency ?? 'INR',
+      roomNumber: input.roomNumber,
+      viewType: input.viewType,
+      bathroomType: input.bathroomType,
+      bedType: input.bedType,
+      extraMattressCount: input.extraMattressCount,
+      extraMattressCharge: input.extraMattressCharge,
       amenities: input.amenities as Prisma.InputJsonValue,
       images: input.images as Prisma.InputJsonValue,
       status: input.status ?? 'AVAILABLE',
@@ -47,7 +59,25 @@ export async function createRoom(wingId: string, input: {
   });
 }
 
-export async function updateRoom(roomId: string, input: Partial<{ name: string; type: any; capacity: number; pricePerUnit: number; currency: string; amenities: string[]; images: string[]; status: any }>) {
+export async function updateRoom(
+  roomId: string,
+  input: Partial<{
+    name: string;
+    type: any;
+    capacity: number;
+    pricePerUnit: number;
+    currency: string;
+    roomNumber: string;
+    viewType: string;
+    bathroomType: string;
+    bedType: string;
+    extraMattressCount: number;
+    extraMattressCharge: number;
+    amenities: string[];
+    images: string[];
+    status: any;
+  }>
+) {
   return prisma.roomOrHall.update({
     where: { id: roomId },
     data: {

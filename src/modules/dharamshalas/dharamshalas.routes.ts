@@ -38,8 +38,9 @@ dharamshalaRoutes.delete('/:organizationId/trustees/:trusteeId', requireAuth, re
 dharamshalaRoutes.post('/:organizationId/contacts', requireAuth, requirePermission('DHARAMSHALAS', 'EDIT'), scopeToOrganization, validate(addContactSchema), ctrl.addContact);
 dharamshalaRoutes.delete('/:organizationId/contacts/:contactId', requireAuth, requirePermission('DHARAMSHALAS', 'EDIT'), scopeToOrganization, extra.deleteContact);
 
-// Dhaja
-dharamshalaRoutes.put('/:organizationId/dhaja/:year', requireAuth, requirePermission('DHARAMSHALAS', 'EDIT'), scopeToOrganization, validate(addDhajaRecordSchema), ctrl.upsertDhajaRecord);
+// Dhaja — multiple entries per year are allowed (e.g. one per Mandir/Shikhar)
+dharamshalaRoutes.post('/:organizationId/dhaja', requireAuth, requirePermission('DHARAMSHALAS', 'EDIT'), scopeToOrganization, validate(addDhajaRecordSchema), ctrl.addDhajaRecord);
+dharamshalaRoutes.patch('/:organizationId/dhaja/:dhajaRecordId', requireAuth, requirePermission('DHARAMSHALAS', 'EDIT'), scopeToOrganization, validate(addDhajaRecordSchema), ctrl.updateDhajaRecord);
 dharamshalaRoutes.delete('/:organizationId/dhaja/:dhajaId', requireAuth, requirePermission('DHARAMSHALAS', 'EDIT'), scopeToOrganization, extra.deleteDhaja);
 
 // Reviews

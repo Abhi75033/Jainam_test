@@ -53,8 +53,13 @@ export const makeOrganizationController = (type: OrganizationType) => ({
     return created(res, row);
   }),
 
-  upsertDhajaRecord: asyncHandler(async (req: Request, res: Response) => {
-    const row = await orgService.upsertDhajaRecord(req.params.organizationId as string, req.body);
+  addDhajaRecord: asyncHandler(async (req: Request, res: Response) => {
+    const row = await orgService.addDhajaRecord(req.params.organizationId as string, req.body);
+    return created(res, row);
+  }),
+
+  updateDhajaRecord: asyncHandler(async (req: Request, res: Response) => {
+    const row = await orgService.updateDhajaRecord(req.params.dhajaRecordId as string, req.body);
     return ok(res, row);
   }),
 

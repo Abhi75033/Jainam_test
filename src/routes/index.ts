@@ -49,6 +49,7 @@ import { bannerRoutes } from '@/modules/banners/banners.routes';
 import { homeSectionRoutes } from '@/modules/homeSections/homeSections.routes';
 import { subscriptionPlanRoutes } from '@/modules/subscriptionPlans/subscriptionPlans.routes';
 import { manualTrackingRoutes } from '@/modules/manualTracking/manualTracking.routes';
+import { receiptRoutes } from '@/modules/receipts/receipts.routes';
 
 export function registerRoutes(app: Express) {
   const v1 = Router();
@@ -64,6 +65,7 @@ export function registerRoutes(app: Express) {
   v1.use('/visitors', visitorRoutes);
   v1.use('/bookings', bookingRoutes);
   v1.use('/donations', donationRoutes);
+  v1.use('/receipts', receiptRoutes);
   v1.use('/events', eventRoutes);
   v1.use('/tickets', ticketRoutes);
   v1.use('/seating', seatingRoutes);

@@ -34,7 +34,8 @@ export async function requireAuth(req: Request, _res: Response, next: NextFuncti
     };
     (req as any).effectivePermissions = effective;
     next();
-  } catch {
+  } catch (err) {
+    if (err instanceof ApiError) return next(err);
     next(ApiError.unauthorized('Invalid or expired token'));
   }
 }

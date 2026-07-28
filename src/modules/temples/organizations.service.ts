@@ -16,7 +16,11 @@ const PREFIX_BY_TYPE: Record<OrganizationType, keyof typeof ID_PREFIXES> = {
 
 /** Only Super Admin creates Temples/JCs/Dharamshalas (§5.5, §5.6) — enforced at the route layer via requireRole. */
 export async function createOrganization(input: Record<string, unknown> & { type: OrganizationType; createdById: string }) {
-  const { type, createdById, bankAccount, ...rest } = input as any;
+  // §57/#58: buildings has no matching column on Organization — it must be
+  // pulled out before the Prisma create() call (previously it wasn't, so
+  // submitting building/room data during initial creation crashed with an
+  // "unknown argument" error) and synced separately afterward instead.
+  const { type, createdById, bankAccount, buildings, ...rest } = input as any;
 
   const publicId = await prisma.$transaction((tx) => nextPublicId(PREFIX_BY_TYPE[type as OrganizationType], tx));
 
@@ -42,6 +46,10 @@ export async function createOrganization(input: Record<string, unknown> & { type
       updatedById: createdById,
     },
   });
+
+  if (buildings && Array.isArray(buildings)) {
+    await syncOrgBuildings(org.id, buildings, cleanedRest.preferredCurrency);
+  }
 
   try {
     const { createAutoFeedCard } = await import('@/modules/feed/feed.service');
@@ -79,8 +87,162 @@ export async function createOrganization(input: Record<string, unknown> & { type
   return org;
 }
 
+/**
+ * §57/#58: shared building/room sync used by both create and update — buildings
+ * previously could only ever be synced from updateOrganization, so submitting
+ * building/room data during initial creation would crash (buildings has no
+ * matching column on Organization, so it was never stripped before the
+ * Prisma create() call). Extracted so createOrganization can use it too.
+ */
+async function syncOrgBuildings(organizationId: string, buildings: any[], preferredCurrency?: string) {
+  const isDbId = (id: string) => id && id.length > 10 && isNaN(Number(id));
+
+  // Get all existing buildings for this organization to handle deletions
+  const existingBuildings = await prisma.building.findMany({
+      where: { organizationId, deletedAt: null },
+      include: { wings: { where: { deletedAt: null }, include: { rooms: { where: { deletedAt: null } } } } }
+    });
+
+    // Soft delete buildings not present in incoming payload
+    const incomingBuildingIds = new Set(buildings.map(b => b.id).filter(id => isDbId(id)));
+    for (const eb of existingBuildings) {
+      if (!incomingBuildingIds.has(eb.id)) {
+        await prisma.building.update({
+          where: { id: eb.id },
+          data: { deletedAt: new Date() }
+        });
+        // Soft delete all wings and rooms in this building
+        for (const wing of eb.wings) {
+          await prisma.wing.update({
+            where: { id: wing.id },
+            data: { deletedAt: new Date() }
+          });
+          for (const room of wing.rooms) {
+            await prisma.roomOrHall.update({
+              where: { id: room.id },
+              data: { deletedAt: new Date() }
+            });
+          }
+        }
+      }
+    }
+
+    // Process each incoming building
+    for (const b of buildings) {
+      let buildingId = b.id;
+      let dbBuilding;
+
+      if (isDbId(buildingId)) {
+        dbBuilding = await prisma.building.update({
+          where: { id: buildingId },
+          data: { name: b.name, imageUrl: b.imageUrl || null, roomNumbers: (b.roomNumbers ?? undefined) as Prisma.InputJsonValue }
+        });
+      } else {
+        dbBuilding = await prisma.building.create({
+          data: {
+            organizationId,
+            name: b.name,
+            imageUrl: b.imageUrl || null,
+            roomNumbers: (b.roomNumbers ?? undefined) as Prisma.InputJsonValue
+          }
+        });
+        buildingId = dbBuilding.id;
+      }
+
+      // Ensure we have a default Main Wing for this building
+      let wing = await prisma.wing.findFirst({
+        where: { buildingId, deletedAt: null }
+      });
+      if (!wing) {
+        wing = await prisma.wing.create({
+          data: {
+            buildingId,
+            name: 'Main Wing'
+          }
+        });
+      }
+      const wingId = wing.id;
+
+      // Handle rooms under this wing
+      const incomingRoomIds = new Set((b.roomTypes || []).map((r: any) => r.id).filter((id: string) => isDbId(id)));
+      const existingRooms = await prisma.roomOrHall.findMany({
+        where: { wingId, deletedAt: null }
+      });
+
+      // Soft delete rooms not in incoming payload
+      for (const er of existingRooms) {
+        if (!incomingRoomIds.has(er.id)) {
+          await prisma.roomOrHall.update({
+            where: { id: er.id },
+            data: { deletedAt: new Date() }
+          });
+        }
+      }
+
+      // Process each incoming room
+      for (const r of b.roomTypes || []) {
+        const capacity = Number(r.bedCapacity) || 2;
+        const pricePerUnit = Number(r.charges) || 0;
+        const roomCount = Number(r.roomCount) || 1;
+        const deposit = Number(r.deposit) || 0;
+        const extraMattressCount = Number(r.extraMattressCount) || 0;
+        const extraMattressCharge = Number(r.extraMattressCharge) || 0;
+
+        let type: 'ROOM' | 'DORMITORY' | 'HALL' = 'ROOM';
+        if (r.type === 'Dormitory') {
+          type = 'DORMITORY';
+        } else if (r.type === 'Hall') {
+          type = 'HALL';
+        }
+
+        // §58: room charges previously always stored a hardcoded 'INR' code
+        // regardless of the org's actual preferred currency (e.g. "USD ($)")
+        // — extract the real code so charges display in the right currency.
+        const currencyCode = typeof preferredCurrency === 'string' && preferredCurrency
+          ? preferredCurrency.split(' ')[0]
+          : 'INR';
+
+        const roomData = {
+          name: r.name,
+          type,
+          capacity,
+          pricePerUnit,
+          currency: currencyCode,
+          roomNumber: r.roomNumber || null,
+          viewType: r.viewType || null,
+          bathroomType: r.bathroomType || null,
+          bedType: r.bedType || null,
+          extraMattressCount,
+          extraMattressCharge,
+          category: r.category || null,
+          roomCount,
+          chargesType: r.chargesType || null,
+          deposit,
+          attachedBathroom: r.attachedBathroom || null,
+          amenities: Array.isArray(r.amenities) ? r.amenities : [],
+          images: (Array.isArray(r.images) ? r.images : []) as Prisma.InputJsonValue,
+          status: 'AVAILABLE' as const
+        };
+
+        if (isDbId(r.id)) {
+          await prisma.roomOrHall.update({
+            where: { id: r.id },
+            data: roomData
+          });
+        } else {
+          await prisma.roomOrHall.create({
+            data: {
+              wingId,
+              ...roomData
+            }
+          });
+        }
+      }
+    }
+  }
+/** Sync buildings/rooms, then persist the rest of the org's fields. */
 export async function updateOrganization(organizationId: string, input: Record<string, unknown>, updatedById: string) {
-  const { bankAccount, ...rest } = input as any;
+  const { bankAccount, buildings, ...rest } = input as any;
 
   // B3 Fix: Convert empty-string FK relation IDs to null/undefined to prevent
   // Prisma FK constraint violations (e.g., mulNayakBhagwanId: "" → undefined).
@@ -105,6 +267,11 @@ export async function updateOrganization(organizationId: string, input: Record<s
       updatedAt: new Date(),
     },
   });
+
+  // Sync buildings and rooms if they are provided
+  if (buildings && Array.isArray(buildings)) {
+    await syncOrgBuildings(organizationId, buildings, cleanedRest.preferredCurrency);
+  }
 
   try {
     const { createAutoFeedCard } = await import('@/modules/feed/feed.service');
@@ -152,11 +319,75 @@ export async function getOrganization(organizationId: string) {
       contacts: { include: { member: true } },
       historyEvents: true,
       dhajaRecords: { orderBy: { year: 'desc' } },
-      notices: { where: { deletedAt: null }, orderBy: [{ isPinned: 'desc' }, { createdAt: 'desc' }] },
+      notices: {
+        where: {
+          deletedAt: null,
+          OR: [
+            { endDate: null },
+            { endDate: { gte: new Date() } }
+          ]
+        },
+        orderBy: [{ isPinned: 'desc' }, { createdAt: 'desc' }]
+      },
       socialLinks: true,
     },
   });
   if (!org) throw ApiError.notFound('Organization not found');
+
+  // If this is a Dharamshala, populate and map its buildings/rooms
+  if (org.type === 'DHARAMSHALA') {
+    const dbBuildings = await prisma.building.findMany({
+      where: { organizationId, deletedAt: null },
+      include: {
+        wings: {
+          where: { deletedAt: null },
+          include: {
+            rooms: {
+              where: { deletedAt: null }
+            }
+          }
+        }
+      }
+    });
+
+    const mappedBuildings = dbBuildings.map((b) => {
+      const roomTypes = b.wings.flatMap((w: any) =>
+        w.rooms.map((r: any) => ({
+          id: r.id,
+          name: r.name,
+          category: r.category || (r.type === 'ROOM' ? 'AC' : 'Non-AC'),
+          type: r.type === 'DORMITORY' ? 'Dormitory' : r.type === 'HALL' ? 'Hall' : 'Private',
+          roomCount: r.roomCount ? String(r.roomCount) : '1',
+          bedCapacity: String(r.capacity),
+          charges: r.pricePerUnit ? String(r.pricePerUnit) : '0',
+          chargesType: r.chargesType || 'Per Room',
+          deposit: r.deposit ? String(r.deposit) : '0',
+          attachedBathroom: r.attachedBathroom || 'Yes',
+          amenities: Array.isArray(r.amenities) ? r.amenities : [],
+          roomNumber: r.roomNumber || '',
+          viewType: r.viewType || 'Garden',
+          bathroomType: r.bathroomType || 'Western',
+          bedType: r.bedType || 'Double Occupancy',
+          extraMattressCount: r.extraMattressCount || 0,
+          extraMattressCharge: r.extraMattressCharge ? Number(r.extraMattressCharge) : 0,
+        }))
+      );
+
+      return {
+        id: b.id,
+        name: b.name,
+        imageUrl: b.imageUrl || '',
+        roomNumbers: Array.isArray(b.roomNumbers) ? b.roomNumbers : [],
+        roomTypes
+      };
+    });
+
+    return {
+      ...org,
+      buildings: mappedBuildings
+    };
+  }
+
   return org;
 }
 
@@ -256,30 +487,40 @@ export async function verifyContact(contactId: string) {
   return prisma.organizationContact.update({ where: { id: contactId }, data: { otpVerifiedAt: new Date() } });
 }
 
-/** Dhaja Management — per-year records up to 25 years (§5.5). */
-export async function upsertDhajaRecord(organizationId: string, input: { year: number; dhajaDate?: Date; descriptionEn?: string; descriptionHi?: string; linkedMemberIds?: string[]; status?: any }) {
-  const distinctYears = await prisma.dhajaRecord.count({ where: { organizationId } });
-  const existing = await prisma.dhajaRecord.findUnique({ where: { organizationId_year: { organizationId, year: input.year } } });
-  if (!existing && distinctYears >= MAX_DHAJA_YEARS) {
-    throw ApiError.validation({ year: [`Maximum ${MAX_DHAJA_YEARS} years of Dhaja records allowed`] });
+/**
+ * Dhaja Management (§5.5) — multiple entries per year are allowed (one per
+ * Mandir/Shikhar), so this is a plain create, not an upsert keyed by year.
+ * Capped at MAX_DHAJA_YEARS total entries per organization.
+ */
+export async function addDhajaRecord(organizationId: string, input: { year: number; dhajaOf?: string; dhajaDate?: Date; descriptionEn?: string; descriptionHi?: string; linkedMemberIds?: string[]; status?: any }) {
+  const totalRecords = await prisma.dhajaRecord.count({ where: { organizationId } });
+  if (totalRecords >= MAX_DHAJA_YEARS) {
+    throw ApiError.validation({ year: [`Maximum ${MAX_DHAJA_YEARS} Dhaja records allowed`] });
   }
-  return prisma.dhajaRecord.upsert({
-    where: { organizationId_year: { organizationId, year: input.year } },
-    update: {
-      dhajaDate: input.dhajaDate,
-      descriptionEn: input.descriptionEn,
-      descriptionHi: input.descriptionHi,
-      linkedMemberIds: input.linkedMemberIds as Prisma.InputJsonValue,
-      status: input.status,
-    },
-    create: {
+  return prisma.dhajaRecord.create({
+    data: {
       organizationId,
       year: input.year,
+      dhajaOf: input.dhajaOf,
       dhajaDate: input.dhajaDate,
       descriptionEn: input.descriptionEn,
       descriptionHi: input.descriptionHi,
       linkedMemberIds: input.linkedMemberIds as Prisma.InputJsonValue,
       status: input.status ?? 'NOT_YET_FINALIZED',
+    },
+  });
+}
+
+export async function updateDhajaRecord(dhajaRecordId: string, input: { dhajaOf?: string; dhajaDate?: Date; descriptionEn?: string; descriptionHi?: string; linkedMemberIds?: string[]; status?: any }) {
+  return prisma.dhajaRecord.update({
+    where: { id: dhajaRecordId },
+    data: {
+      dhajaOf: input.dhajaOf,
+      dhajaDate: input.dhajaDate,
+      descriptionEn: input.descriptionEn,
+      descriptionHi: input.descriptionHi,
+      linkedMemberIds: input.linkedMemberIds as Prisma.InputJsonValue,
+      status: input.status,
     },
   });
 }

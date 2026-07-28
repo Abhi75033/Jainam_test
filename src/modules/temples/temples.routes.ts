@@ -38,8 +38,9 @@ templeRoutes.delete('/:organizationId/trustees/:trusteeId', requireAuth, require
 templeRoutes.post('/:organizationId/contacts', requireAuth, requirePermission('TEMPLES', 'EDIT'), scopeToOrganization, validate(addContactSchema), ctrl.addContact);
 templeRoutes.delete('/:organizationId/contacts/:contactId', requireAuth, requirePermission('TEMPLES', 'EDIT'), scopeToOrganization, extra.deleteContact);
 
-// Dhaja
-templeRoutes.put('/:organizationId/dhaja/:year', requireAuth, requirePermission('TEMPLES', 'EDIT'), scopeToOrganization, validate(addDhajaRecordSchema), ctrl.upsertDhajaRecord);
+// Dhaja — multiple entries per year are allowed (e.g. one per Mandir/Shikhar)
+templeRoutes.post('/:organizationId/dhaja', requireAuth, requirePermission('TEMPLES', 'EDIT'), scopeToOrganization, validate(addDhajaRecordSchema), ctrl.addDhajaRecord);
+templeRoutes.patch('/:organizationId/dhaja/:dhajaRecordId', requireAuth, requirePermission('TEMPLES', 'EDIT'), scopeToOrganization, validate(addDhajaRecordSchema), ctrl.updateDhajaRecord);
 templeRoutes.delete('/:organizationId/dhaja/:dhajaId', requireAuth, requirePermission('TEMPLES', 'EDIT'), scopeToOrganization, extra.deleteDhaja);
 
 // Reviews — add, reply, delete

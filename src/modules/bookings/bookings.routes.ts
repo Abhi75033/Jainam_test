@@ -18,6 +18,7 @@ import * as bookingsController from './bookings.controller';
 export const bookingRoutes = Router();
 
 // Booking item configuration (org admins)
+bookingRoutes.get('/items/org/:organizationId', requireAuth, requirePermission('BOOKINGS', 'VIEW'), scopeToOrganization, bookingsController.listBookingItems);
 bookingRoutes.post('/items', requireAuth, requirePermission('BOOKINGS', 'CREATE'), scopeToOrganization, validate(createBookingItemSchema), bookingsController.createBookingItem);
 bookingRoutes.patch('/items/:itemId', requireAuth, requirePermission('BOOKINGS', 'EDIT'), validate(updateBookingItemSchema), bookingsController.updateBookingItem);
 bookingRoutes.post('/items/:itemId/blackout-dates', requireAuth, requirePermission('BOOKINGS', 'EDIT'), validate(addBlackoutDateSchema), bookingsController.addBlackoutDate);

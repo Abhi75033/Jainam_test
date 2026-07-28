@@ -94,6 +94,9 @@ model User {
   preferredLanguage  String     @default("English")
   lastLoginAt        DateTime?
   createdByAdmin     Boolean    @default(false) // admins/staff are never self-registered
+  createdById        String?    // hierarchy: SA who created this Admin (see Staff.createdById for Admin/Staff→Staff chains)
+  createdBy          User?      @relation("UserCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdUsers       User[]     @relation("UserCreatedBy")
   createdAt          DateTime   @default(now())
   updatedAt          DateTime   @updatedAt
   failedLoginAttempts  Int        @default(0)
@@ -566,6 +569,7 @@ model Organization {
   mulNayakImageUrl        String?
   muritCount              Int?
   templeType              TempleType?
+  insideTempleType        TempleType?
   tithiCalendarTypeId     String?
   tithiCalendarType       TithiCalendarType? @relation(fields: [tithiCalendarTypeId], references: [id])
   history                 String?
@@ -579,15 +583,87 @@ model Organization {
   googleMapsLink          String?
   facilities              Json? // multi-select facility list snapshot
   hasUpashray             Boolean            @default(false)
+  upashrayLocation        String?
   hasEventHall            Boolean            @default(false)
   eventHallBookable       Boolean            @default(false)
+  eventHallPurpose        String?
+  eventHallBookingLink    String?
+  eventHallBookingItemId  String?
+  sect                    String?
+  subSect                 String?
+  gacchaName              String?
+  preferredCurrency       String?
+  morningStart            String?
+  morningEnd              String?
+  eveningStart            String?
+  eveningEnd              String?
+  pakshalStart            String?
+  pakshalEnd              String?
+  poojaStart              String?
+  poojaEnd                String?
+  aartiMorning            String?
+  aartiEvening            String?
+  dharamshalaRooms        String?
+  dharamshalaOffice       String?
+  dharamshalaPhone        String?
+  dharamshalaContact      String?
+  dharamshalaContactMemberId String?
+  dharamshalaOnline       String?
+  pathshalaTimings        String?
+  pathshalaDays           String?
+  pathshalaTeacher        String?
+  pathshalaTeacherMemberId String?
   hasBhojanshala          Boolean            @default(false)
+  bhojanshalaBreakfastCharge String?
+  bhojanshalaBreakfastTiming String?
+  bhojanshalaLunchCharge     String?
+  bhojanshalaLunchTiming     String?
+  bhojanshalaDinnerCharge    String?
+  bhojanshalaDinnerTiming    String?
+  bhojanshalaContact         String?
+  bhojanshalaContactMemberId String?
+  bhojanshalaMealType        String?
+  bhojanshalaAvailability    String?
+  bankAccountName         String?
   bankAccountEncrypted    String?
   bankIfsc                String?
   upiId                   String?
+  bankName                String?
+  bankBranch              String?
   is80gEligible           Boolean            @default(false)
   csrEligible             Boolean            @default(false)
   donationQrUrl           String?
+  landmark                 String?
+  railwayStation           String?
+  district                 String?
+  hasTempleInside          Boolean            @default(false)
+  templeMulNayakName       String?
+  templeMulNayakImageUrl   String?
+  templeTithiCalendar      String?
+  templeOpeningHours       String?
+  templePakshalStart       String?
+  templePoojaStart         String?
+  templeAartiEvening       String?
+  checkInTime              String?
+  checkOutTime             String?
+  advanceBookingRequired   Boolean            @default(false)
+  onlineBookingAvailable   Boolean            @default(false)
+  dharamshalaStatus        String?
+  adminBlockedRooms        String?
+  emergencyContact         String?
+  caretakerDetails         String?
+  rulesText                String?
+  primaryContactMemberId   String?
+  secondaryContactMemberId String?
+  contactEmail             String?
+  contactMobileVerified    Boolean            @default(false)
+  contactWhatsAppVerified  Boolean            @default(false)
+  contactEmailVerified     Boolean            @default(false)
+  primaryContactPreference String?
+  donationQrCodeUrl        String?
+  instaLink                String?
+  facebookLink             String?
+  youtubeLink              String?
   disclaimerText          String?
   avgRating               Float              @default(0)
   followersCount          Int                @default(0)
@@ -715,14 +791,15 @@ model DhajaRecord {
   organizationId  String
   organization    Organization @relation(fields: [organizationId], references: [id])
   year            Int
+  dhajaOf         String? // e.g. which Mandir/Shikhar this Dhaja entry is for
   dhajaDate       DateTime?
   descriptionEn   String?
   descriptionHi   String?
-  linkedMemberIds Json? // array of member publicIds
+  linkedMemberIds Json? // array of member publicIds ("Dhaja by")
   status          DhajaStatus  @default(NOT_YET_FINALIZED)
   createdAt       DateTime     @default(now())
 
-  @@unique([organizationId, year])
+  // Multiple Dhaja entries per year are allowed (e.g. one per shikhar/mandir).
   @@map("dhaja_records")
 }
 
@@ -805,6 +882,10 @@ model Building {
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id])
   name           String
+  imageUrl       String?
+  // §57: room numbers defined once per building (e.g. ["101","102",...]) so a
+  // room type can pick from this shared pool instead of free-typing a range.
+  roomNumbers    Json?
   deletedAt      DateTime?
 
   wings Wing[]
@@ -838,18 +919,29 @@ enum RoomStatus {
 }
 
 model RoomOrHall {
-  id           String     @id @default(cuid())
-  wingId       String
-  wing         Wing       @relation(fields: [wingId], references: [id])
-  name         String
-  type         RoomType
-  capacity     Int
-  pricePerUnit Decimal    @default(0) @db.Decimal(12, 2)
-  currency     String     @default("INR")
-  amenities    Json?
-  images       Json?
-  status       RoomStatus @default(AVAILABLE)
-  deletedAt    DateTime?
+  id                  String     @id @default(cuid())
+  wingId              String
+  wing                Wing       @relation(fields: [wingId], references: [id])
+  name                String
+  type                RoomType
+  capacity            Int
+  pricePerUnit        Decimal    @default(0) @db.Decimal(12, 2)
+  currency            String     @default("INR")
+  roomNumber          String?
+  viewType            String?
+  bathroomType        String?
+  bedType             String?
+  extraMattressCount  Int?
+  extraMattressCharge Decimal?   @default(0) @db.Decimal(12, 2)
+  category            String?
+  roomCount           Int?
+  chargesType         String?
+  deposit             Decimal?   @default(0) @db.Decimal(12, 2)
+  attachedBathroom    String?
+  amenities           Json?
+  images              Json?
+  status              RoomStatus @default(AVAILABLE)
+  deletedAt           DateTime?
 
   tourRoomAssignments TourRoomAssignment[]
 
@@ -1044,6 +1136,12 @@ model Member {
   isVolunteer           Boolean @default(false)
   volunteerAreas        Json?
   volunteerAvailability String?
+
+  // Sibling entries as captured by the registration/edit form: either linked to
+  // a real platform Member profile (siblingMemberId) or a plain free-text name
+  // when the sibling has no profile yet. Kept as a loose Json blob (like
+  // emergencyContact/volunteerAreas above) since it mixes both shapes.
+  siblings Json?
 
   currencyCode String @default("INR")
 
@@ -1290,6 +1388,8 @@ model Staff {
   employmentStatus     EmploymentStatus  @default(ACTIVE)
   category             String?
   categorySpecify      String?
+  departmentSpecify    String?
+  designationSpecify   String?
   reportingTo          String?
   dob                  DateTime?
   gender               String?
@@ -1660,6 +1760,15 @@ model Event {
   endAt              DateTime
   attachments        Json?
   visibilityConfig   Json? // geo levels/GPS radius + community/sect + followers + linked members
+  // Fields from the event-creation spec that had no backing column at all:
+  // Sponsored By (multiple linked members, each with its own description),
+  // Link MS (multiple monk profiles), Contact Person (multiple linked
+  // members, mobile shown to viewers), External Links, Additional Notes.
+  sponsors           Json? // [{ memberId, description }]
+  linkedMonkIds      Json? // string[] of MonkProfile ids
+  contactPersonIds   Json? // string[] of Member ids
+  externalLinks      Json? // string[]
+  additionalNotes    String?
   rsvpCapacity       Int?
   waitingListEnabled Boolean        @default(true)
   isPaid             Boolean        @default(false)
@@ -2072,23 +2181,26 @@ enum TourStatus {
 }
 
 model Tour {
-  id            String       @id @default(cuid())
-  publicId      String       @unique
+  id            String        @id @default(cuid())
+  publicId      String        @unique
   name          String
-  categoryId    String
-  category      TourCategory @relation(fields: [categoryId], references: [id])
+  categoryId    String?
+  category      TourCategory? @relation(fields: [categoryId], references: [id])
   startDate     DateTime
   endDate       DateTime
   location      String?
   description   String?
   coverUrl      String?
-  jatraTarget   Int
-  targetLocked  Boolean      @default(false)
-  status        TourStatus   @default(DRAFT)
-  primaryMonkId String
-  primaryMonk   MonkProfile  @relation("PrimaryMonk", fields: [primaryMonkId], references: [id])
+  // §G2: null means this is a plain group tour with no 99/108/216-style jatra-count
+  // tracking — the two were previously conflated by forcing every tour to carry a
+  // (frequently fabricated) target and monk even when neither applied.
+  jatraTarget   Int?
+  targetLocked  Boolean       @default(false)
+  status        TourStatus    @default(DRAFT)
+  primaryMonkId String?
+  primaryMonk   MonkProfile?  @relation("PrimaryMonk", fields: [primaryMonkId], references: [id])
   monkGroupId   String?
-  monkGroup     MonkGroup?   @relation(fields: [monkGroupId], references: [id])
+  monkGroup     MonkGroup?    @relation(fields: [monkGroupId], references: [id])
   createdById   String?
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
@@ -2281,20 +2393,44 @@ model TourDailySchedule {
 // =============================================================================
 
 model VolunteerOpportunity {
-  id             String         @id @default(cuid())
-  organizationId String
-  organization   Organization   @relation(fields: [organizationId], references: [id])
-  role           String
-  details        String?
-  areaId         String?
-  area           VolunteerArea? @relation(fields: [areaId], references: [id])
-  createdById    String?
-  createdAt      DateTime       @default(now())
-  deletedAt      DateTime?
+  id              String         @id @default(cuid())
+  organizationId  String
+  organization    Organization   @relation(fields: [organizationId], references: [id])
+  role            String // event/opportunity title
+  details         String?
+  areaId          String?
+  area            VolunteerArea? @relation(fields: [areaId], references: [id])
+  // Fields the create-opportunity form already collected but the backend
+  // never had a place to store — they were silently dropped on every save.
+  date            DateTime?
+  startTime       String?
+  endTime         String?
+  locationType    String? // "inside_temple" | "ground"
+  locationAddress String?
+  instructions    String?
+  contactPersonId String?
+  createdById     String?
+  createdAt       DateTime       @default(now())
+  deletedAt       DateTime?
 
-  applications VolunteerApplication[]
+  roleRequirements VolunteerRoleRequirement[]
+  applications     VolunteerApplication[]
 
   @@map("volunteer_opportunities")
+}
+
+/// One row per requested area/role within an opportunity, each with its own
+/// required headcount (e.g. Cleanliness — 20, Event Support — 10) — replaces
+/// the single areaId+count that couldn't express "multiple areas, each with
+/// their own count" from the same opportunity.
+model VolunteerRoleRequirement {
+  id            String               @id @default(cuid())
+  opportunityId String
+  opportunity   VolunteerOpportunity @relation(fields: [opportunityId], references: [id])
+  title         String
+  requiredCount Int
+
+  @@map("volunteer_role_requirements")
 }
 
 enum VolunteerApplicationStatus {
@@ -2516,6 +2652,7 @@ model CommunityPage {
   id                    String                 @id @default(cuid())
   publicId              String                 @unique
   name                  String
+  shortName             String?
   logoUrl               String?
   bannerUrl             String?
   about                 String?
@@ -2605,6 +2742,7 @@ model GalleryAlbum {
   organization   Organization @relation(fields: [organizationId], references: [id])
   eventId        String?
   name           String
+  description    String?
   createdAt      DateTime     @default(now())
   deletedAt      DateTime?
 
@@ -2766,6 +2904,11 @@ model ChaturmasPlan {
   contactMobile  String?
   status         String       @default("ACTIVE") // ACTIVE | COMPLETED | CANCELLED
   notes          String?
+  monkIds        Json?        // Array of monk profile IDs
+  sponsorIds     Json?        // Array of member IDs of sponsors
+  images         Json?        // Array of image URLs
+  links          Json?        // Array of links
+  year           Int?         // Chaturmas Year
   createdById    String?
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt

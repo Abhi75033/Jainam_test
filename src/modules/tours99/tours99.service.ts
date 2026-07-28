@@ -21,19 +21,25 @@ import PDFDocument from 'pdfkit';
 
 export async function createTour(input: {
   name: string;
-  categoryId: string;
+  categoryId?: string;
   startDate: Date;
   endDate: Date;
   location?: string;
   description?: string;
   coverUrl?: string;
-  jatraTarget: number;
-  primaryMonkId: string;
+  jatraTarget?: number;
+  primaryMonkId?: string;
   monkGroupId?: string;
   createdById: string;
 }) {
-  const monk = await prisma.monkProfile.findUnique({ where: { id: input.primaryMonkId } });
-  if (!monk || monk.deletedAt) throw ApiError.validation({ primaryMonkId: ['Monk linking is mandatory — provide a valid JFMS monk'] });
+  // §G2: only a jatra-tracking tour (jatraTarget set) requires a real linked
+  // monk — a plain group tour has neither field and skips this check entirely.
+  if (input.jatraTarget && input.primaryMonkId) {
+    const monk = await prisma.monkProfile.findUnique({ where: { id: input.primaryMonkId } });
+    if (!monk || monk.deletedAt) throw ApiError.validation({ primaryMonkId: ['Provide a valid MS profile for a jatra-tracking tour'] });
+  } else if (input.jatraTarget && !input.primaryMonkId) {
+    throw ApiError.validation({ primaryMonkId: ['Monk linking is mandatory for a jatra-tracking tour'] });
+  }
 
   return prisma.$transaction(async (tx) => {
     const publicId = await nextPublicId('TOUR', tx);
@@ -247,6 +253,7 @@ export async function enterDailyJatraCount(participantId: string, date: Date, co
     include: { tour: true, member: { select: { userId: true, fullName: true } }, parentMember: { select: { userId: true } } },
   });
   if (!participant) throw ApiError.notFound('Participant not found');
+  if (!participant.tour.jatraTarget) throw ApiError.conflict('This tour does not track jatra counts');
 
   const day = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
 
@@ -268,6 +275,7 @@ export async function enterDailyJatraCount(participantId: string, date: Date, co
   });
 
   const target = participant.tour.jatraTarget;
+  if (!target) throw ApiError.conflict('This tour does not track jatra counts');
   const pct = Math.floor((result.cumulative / target) * 100);
 
   for (const milestone of MILESTONES) {
@@ -308,7 +316,7 @@ export async function participantMilestoneProgress(participantId: string) {
   return {
     target,
     completed,
-    progressPercent: Math.min(Math.floor((completed / target) * 100), 100),
+    progressPercent: target ? Math.min(Math.floor((completed / target) * 100), 100) : null,
     milestones,
     certificateUrl: certificate,
     dailyCounts,

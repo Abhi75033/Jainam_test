@@ -69,9 +69,6 @@ export async function purchaseTickets(input: {
   if (category.saleEndAt && now > category.saleEndAt) throw ApiError.conflict('Ticket sales have ended');
   if (!['PUBLISHED', 'RSVP_SALES_OPEN', 'LIVE'].includes(category.event.status)) throw ApiError.conflict('Tickets are not on sale for this event');
 
-  const sold = await prisma.ticket.count({ where: { ticketCategoryId: category.id, status: { in: ['PENDING_PAYMENT', 'PAYMENT_SUCCESSFUL', 'TICKET_GENERATED', 'CHECKED_IN'] } } });
-  if (sold + input.attendees.length > category.capacity) throw ApiError.conflict('Not enough tickets remaining in this category');
-
   // Resolve attendee member IDs (guests may be blank per event policy §5.9)
   const resolvedAttendees = await Promise.all(
     input.attendees.map(async (a) => {
@@ -84,6 +81,32 @@ export async function purchaseTickets(input: {
   const buyer = await prisma.member.findUniqueOrThrow({ where: { id: input.buyerMemberId } });
 
   const tickets = await prisma.$transaction(async (tx) => {
+    // Lock this category's row for the duration of the transaction so
+    // concurrent purchases against the same (limited) capacity are serialized
+    // instead of racing — previously the count-then-insert check ran outside
+    // any lock/transaction and could oversell the last few seats when two
+    // requests landed at the same time.
+    await tx.$executeRaw`SELECT id FROM "ticket_categories" WHERE id = ${category.id} FOR UPDATE`;
+
+    const sold = await tx.ticket.count({ where: { ticketCategoryId: category.id, status: { in: ['PENDING_PAYMENT', 'PAYMENT_SUCCESSFUL', 'TICKET_GENERATED', 'CHECKED_IN'] } } });
+    if (sold + input.attendees.length > category.capacity) throw ApiError.conflict('Not enough tickets remaining in this category');
+
+    // §G1: there is no real payment-gateway integration wired into this backend
+    // (no Razorpay/Stripe SDK, no webhook signature verification exists anywhere
+    // in the codebase) — paymentRef is a client-supplied string taken at face
+    // value. Short of that gateway integration, the concrete exploit this
+    // enables is replay: reusing one valid paymentRef across many separate
+    // checkouts (different idempotencyKey/bookingGroupId) to mint unlimited
+    // free ticket batches. Block that specific abuse: a given paymentRef may
+    // only ever back a single booking group.
+    const reusedPaymentRef = await tx.ticket.findFirst({
+      where: { paymentRef: input.paymentRef, bookingGroupId: { not: input.idempotencyKey } },
+      select: { id: true },
+    });
+    if (reusedPaymentRef) {
+      throw ApiError.conflict('This payment reference has already been used for a different booking');
+    }
+
     const createdTickets = [];
     for (const { attendee, seatId } of resolvedAttendees) {
       const publicId = await nextPublicId('TICKET', tx);

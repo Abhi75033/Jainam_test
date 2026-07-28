@@ -5,6 +5,7 @@ import { validate } from '@/middlewares/validate';
 import { asyncHandler } from '@/utils/asyncHandler';
 import { ok, created } from '@/utils/apiResponse';
 import { prisma } from '@/config/prisma';
+import { ApiError } from '@/utils/ApiError';
 import { Prisma } from '@prisma/client';
 import { getEligibleMemberIds } from '@/engines/visibility/visibility.service';
 import { enqueueNotification } from '@/engines/notification/notification.service';
@@ -15,6 +16,14 @@ const createAnnouncementSchema = z.object({
     organizationId: z.string().optional(),
     title: z.string().min(1),
     body: z.string().min(1),
+    visibilityConfig: z.record(z.string(), z.unknown()).optional(),
+  }),
+});
+
+const updateAnnouncementSchema = z.object({
+  body: z.object({
+    title: z.string().min(1).optional(),
+    body: z.string().min(1).optional(),
     visibilityConfig: z.record(z.string(), z.unknown()).optional(),
   }),
 });
@@ -79,5 +88,37 @@ announcementRoutes.get(
       take: 100,
     });
     return ok(res, announcements);
+  }),
+);
+
+announcementRoutes.patch(
+  '/:id',
+  requireAuth,
+  requirePermission('ANNOUNCEMENTS', 'EDIT'),
+  validate(updateAnnouncementSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const existing = await prisma.announcement.findUnique({ where: { id: req.params.id } });
+    if (!existing || existing.deletedAt) throw ApiError.notFound('Announcement not found');
+    const updated = await prisma.announcement.update({
+      where: { id: req.params.id },
+      data: {
+        title: req.body.title,
+        body: req.body.body,
+        visibilityConfig: req.body.visibilityConfig as Prisma.InputJsonValue,
+      },
+    });
+    return ok(res, updated);
+  }),
+);
+
+announcementRoutes.delete(
+  '/:id',
+  requireAuth,
+  requirePermission('ANNOUNCEMENTS', 'DELETE'),
+  asyncHandler(async (req: Request, res: Response) => {
+    const existing = await prisma.announcement.findUnique({ where: { id: req.params.id } });
+    if (!existing || existing.deletedAt) throw ApiError.notFound('Announcement not found');
+    await prisma.announcement.update({ where: { id: req.params.id }, data: { deletedAt: new Date() } });
+    return ok(res, { deleted: true });
   }),
 );

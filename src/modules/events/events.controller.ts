@@ -108,6 +108,11 @@ export const getEvent = asyncHandler(async (req: Request, res: Response) => {
   return ok(res, event);
 });
 
+export const listEventsForMonk = asyncHandler(async (req: Request, res: Response) => {
+  const rows = await eventsService.listEventsForMonk(req.params.monkId as string);
+  return ok(res, rows, { total: rows.length });
+});
+
 export const memberEvents = asyncHandler(async (req: Request, res: Response) => {
   const member = await requireMember(req.actor!.userId);
   const rows = await eventsService.memberEvents(member.id, req.query as any);

@@ -87,6 +87,18 @@ counterRoutes.post(
   }),
 );
 
+// Rename a counter type
+counterRoutes.patch(
+  '/types/:id',
+  requireAuth,
+  requirePermission('COUNTERS', 'EDIT'),
+  validate(z.object({ body: z.object({ name: z.string().min(1) }) })),
+  asyncHandler(async (req: Request, res: Response) => {
+    const row = await countersService.updateCounterType(req.params.id as string, req.body.name);
+    return ok(res, row);
+  }),
+);
+
 // Delete a counter type
 counterRoutes.delete(
   '/types/:id',

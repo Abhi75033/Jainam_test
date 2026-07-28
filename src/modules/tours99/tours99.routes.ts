@@ -6,17 +6,20 @@ import { asyncHandler } from '@/utils/asyncHandler';
 import { ok, created } from '@/utils/apiResponse';
 import * as toursService from './tours99.service';
 
+// §G2: jatraTarget/primaryMonkId are only required for a 99/108/216-style jatra
+// tour — a plain group tour needs neither. categoryId also made optional so a
+// tour without a matching TourCategory master-data row doesn't crash on create.
 const createTourSchema = z.object({
   body: z.object({
     name: z.string().min(1),
-    categoryId: z.string().min(1),
+    categoryId: z.string().optional(),
     startDate: z.coerce.date(),
     endDate: z.coerce.date(),
     location: z.string().optional(),
     description: z.string().optional(),
     coverUrl: z.string().optional(),
-    jatraTarget: z.number().int().positive(), // 99/108/216/custom
-    primaryMonkId: z.string().min(1), // monk linking mandatory
+    jatraTarget: z.number().int().positive().optional(), // 99/108/216/custom — only for jatra-tracking tours
+    primaryMonkId: z.string().optional(), // only required when this is a jatra-tracking tour
     monkGroupId: z.string().optional(),
   }),
 });

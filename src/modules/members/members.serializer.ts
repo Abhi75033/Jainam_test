@@ -57,5 +57,17 @@ export function serializeMemberFull(member: any, privacy?: MemberPrivacySetting 
       relationship: fm.relationshipType?.name || fm.relationshipTypeId,
       mobile: fm.relatedMember?.mobile || '',
     })) || [],
+    // §B10: combine the linked-profile lookup (resolved by the caller via
+    // resolveSiblingDisplay, since it needs a DB round-trip) with the
+    // relationship into one display-ready entry per sibling.
+    siblings: Array.isArray(member.siblings)
+      ? member.siblings.map((s: any) => ({
+          id: s.id,
+          linkProfile: !!s.linkProfile,
+          siblingMemberId: s.siblingMemberId || null,
+          fullName: (s.linkProfile ? member._resolvedSiblingNames?.[s.siblingMemberId] : s.fullName) || s.fullName || '',
+          relationship: s.relationship || '',
+        }))
+      : [],
   };
 }

@@ -139,7 +139,7 @@ export async function verifyOtpAndAuthenticate(input: {
     });
   } else {
     if (!user) throw ApiError.notFound('This mobile number is not registered.');
-    if (['SUSPENDED', 'BLOCKED', 'DELETED'].includes(user.status)) {
+    if (['INACTIVE', 'SUSPENDED', 'BLOCKED', 'DELETED'].includes(user.status)) {
       throw ApiError.forbidden(`Account is ${user.status.toLowerCase()}. Contact support.`);
     }
     if (!user.mobileVerifiedAt) {

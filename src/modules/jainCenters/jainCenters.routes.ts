@@ -29,7 +29,8 @@ jainCenterRoutes.post('/:organizationId/gallery', requireAuth, requirePermission
 jainCenterRoutes.post('/:organizationId/trustees', requireAuth, requirePermission('JAIN_CENTERS', 'EDIT'), scopeToOrganization, validate(addTrusteeSchema), ctrl.addTrustee);
 jainCenterRoutes.post('/:organizationId/volunteers', requireAuth, requirePermission('JAIN_CENTERS', 'EDIT'), scopeToOrganization, validate(addVolunteerSchema), ctrl.addVolunteer);
 jainCenterRoutes.post('/:organizationId/contacts', requireAuth, requirePermission('JAIN_CENTERS', 'EDIT'), scopeToOrganization, validate(addContactSchema), ctrl.addContact);
-jainCenterRoutes.put('/:organizationId/dhaja/:year', requireAuth, requirePermission('JAIN_CENTERS', 'EDIT'), scopeToOrganization, validate(addDhajaRecordSchema), ctrl.upsertDhajaRecord);
+jainCenterRoutes.post('/:organizationId/dhaja', requireAuth, requirePermission('JAIN_CENTERS', 'EDIT'), scopeToOrganization, validate(addDhajaRecordSchema), ctrl.addDhajaRecord);
+jainCenterRoutes.patch('/:organizationId/dhaja/:dhajaRecordId', requireAuth, requirePermission('JAIN_CENTERS', 'EDIT'), scopeToOrganization, validate(addDhajaRecordSchema), ctrl.updateDhajaRecord);
 jainCenterRoutes.post('/:organizationId/reviews', requireAuth, validate(addReviewSchema), ctrl.addReview);
 jainCenterRoutes.patch('/reviews/:reviewId/reply', requireAuth, requirePermission('JAIN_CENTERS', 'EDIT'), validate(replyReviewSchema), ctrl.replyReview);
 jainCenterRoutes.delete('/reviews/:reviewId', requireAuth, requireRole('SUPER_ADMIN'), ctrl.hideReview);

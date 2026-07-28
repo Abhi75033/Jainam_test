@@ -10,6 +10,8 @@ import {
   logoutSchema,
   createAdminAccountSchema,
   assignAdminOrgsSchema,
+  updateAdminModulesSchema,
+  setAdminActiveStatusSchema,
 } from './auth.dto';
 import * as authController from './auth.controller';
 
@@ -41,4 +43,6 @@ authRoutes.get('/me/modules', requireAuth, authController.myModules);
 authRoutes.get('/admins', requireAuth, requireRole('SUPER_ADMIN'), authController.listAdmins);
 authRoutes.post('/admins', requireAuth, requireRole('SUPER_ADMIN'), validate(createAdminAccountSchema), authController.createAdminAccount);
 authRoutes.patch('/admins/:userId/organizations', requireAuth, requireRole('SUPER_ADMIN'), validate(assignAdminOrgsSchema), authController.assignAdminOrganizations);
+authRoutes.put('/admins/:userId/modules', requireAuth, requireRole('SUPER_ADMIN'), validate(updateAdminModulesSchema), authController.updateAdminModules);
+authRoutes.patch('/admins/:userId/status', requireAuth, requireRole('SUPER_ADMIN'), validate(setAdminActiveStatusSchema), authController.setAdminActiveStatus);
 authRoutes.delete('/admins/:userId', requireAuth, requireRole('SUPER_ADMIN'), authController.deleteAdminAccount);

@@ -11,6 +11,7 @@ import * as pagesService from './communityPages.service';
 const createPageSchema = z.object({
   body: z.object({
     name: z.string().min(1),
+    shortName: z.string().optional(),
     logoUrl: z.string().optional(),
     bannerUrl: z.string().optional(),
     about: z.string().optional(),
@@ -20,6 +21,23 @@ const createPageSchema = z.object({
     visibilityConfig: z.record(z.string(), z.unknown()).optional(),
     joinApprovalMode: z.enum(['AUTO', 'MANUAL']).default('MANUAL'),
     ownerUserIds: z.array(z.string()).min(1),
+  }),
+});
+
+// Owner-editable subset only — excludes ownerUserIds/createdById/subscription* fields
+// (subscription is Super-Admin-only via the dedicated /subscription route below).
+const updatePageSchema = z.object({
+  body: z.object({
+    name: z.string().min(1).optional(),
+    shortName: z.string().optional(),
+    logoUrl: z.string().optional(),
+    bannerUrl: z.string().optional(),
+    about: z.string().optional(),
+    categoryId: z.string().optional(),
+    contacts: z.record(z.string(), z.unknown()).optional(),
+    socialLinks: z.record(z.string(), z.unknown()).optional(),
+    visibilityConfig: z.record(z.string(), z.unknown()).optional(),
+    joinApprovalMode: z.enum(['AUTO', 'MANUAL']).optional(),
   }),
 });
 
@@ -69,7 +87,7 @@ communityPageRoutes.get('/:pageId', requireAuth, asyncHandler(async (req: Reques
 }));
 
 // Page owners manage only their page; blocked when subscription expired (§5.16)
-communityPageRoutes.patch('/:pageId', requireAuth, asyncHandler(async (req: Request, res: Response) => {
+communityPageRoutes.patch('/:pageId', requireAuth, validate(updatePageSchema), asyncHandler(async (req: Request, res: Response) => {
   const page = await pagesService.updatePage(req.params.pageId as string, req.body, { userId: req.actor!.userId, isSuperAdmin: req.actor!.isSuperAdmin });
   return ok(res, page);
 }));

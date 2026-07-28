@@ -22,6 +22,13 @@ export const createEventSchema = z.object({
     endAt: z.coerce.date(),
     attachments: z.array(z.string()).optional(),
     visibilityConfig: visibilityConfigSchema.optional(),
+    // §67: previously entirely missing from the schema — the wizard had no
+    // way to persist these even though the spec requires them.
+    sponsors: z.array(z.object({ memberId: z.string().min(1), description: z.string().optional() })).optional(),
+    linkedMonkIds: z.array(z.string()).optional(),
+    contactPersonIds: z.array(z.string()).optional(),
+    externalLinks: z.array(z.string()).optional(),
+    additionalNotes: z.string().optional(),
     rsvpCapacity: z.number().int().positive().optional(),
     waitingListEnabled: z.boolean().default(true),
     isPaid: z.boolean().default(false),

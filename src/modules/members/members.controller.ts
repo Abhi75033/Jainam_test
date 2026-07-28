@@ -47,6 +47,7 @@ export const updateMyProfile = asyncHandler(async (req: Request, res: Response) 
     isCritical: true,
   });
 
+  (updated as any)._resolvedSiblingNames = await membersService.resolveSiblingNames(updated.siblings);
   return ok(res, serializeMemberFull(updated));
 });
 
@@ -56,7 +57,11 @@ export const getMemberByPublicId = asyncHandler(async (req: Request, res: Respon
 
   const isSelf = member.userId === req.actor!.userId;
   const isPrivileged = req.actor!.isSuperAdmin || (req.actor!.permissions.MEMBERS ?? []).length > 0;
-  return ok(res, isSelf || isPrivileged ? serializeMemberFull(member, member.privacySetting) : serializeMemberPublic(member));
+  if (isSelf || isPrivileged) {
+    member._resolvedSiblingNames = await membersService.resolveSiblingNames(member.siblings);
+    return ok(res, serializeMemberFull(member, member.privacySetting));
+  }
+  return ok(res, serializeMemberPublic(member));
 });
 
 export const addFamilyMember = asyncHandler(async (req: Request, res: Response) => {
@@ -89,6 +94,28 @@ export const addFamilyMember = asyncHandler(async (req: Request, res: Response) 
   return created(res, link);
 });
 
+/** Admin/Super Admin links two already-existing members as family directly by public ID. */
+export const linkFamilyMembers = asyncHandler(async (req: Request, res: Response) => {
+  const link = await membersService.linkExistingFamilyMembers(req.body);
+  await recordAudit({
+    ...auditContextFromRequest(req),
+    module: 'FAMILY',
+    action: 'CREATE',
+    entityType: 'FamilyMember',
+    entityId: link.id,
+    after: { primaryMemberPublicId: req.body.primaryMemberPublicId, relatedMemberPublicId: req.body.relatedMemberPublicId },
+    isCritical: false,
+  });
+  return created(res, link);
+});
+
+/** Admin-wide directory of every family link across all members, for the admin Family Management page. */
+export const listAllFamilyGroups = asyncHandler(async (req: Request, res: Response) => {
+  const { q, page = '1', pageSize = '50' } = req.query as Record<string, string>;
+  const links = await membersService.listAllFamilyLinks({ q, page: Number(page), pageSize: Number(pageSize) });
+  return ok(res, links);
+});
+
 export const bulkImportMembers = asyncHandler(async (req: Request, res: Response) => {
   const result = await membersService.bulkImportMembers(req.body.rows, req.actor!.userId);
   return created(res, result);
@@ -102,23 +129,77 @@ export const bulkImportMembers = asyncHandler(async (req: Request, res: Response
 export const adminCreateMember = asyncHandler(async (req: Request, res: Response) => {
   const {
     firstName, middleName, surname, mobile, email, gender, category = 'JAIN',
-    dob, nationality, pan, aadhaar, maritalStatus,
+    dob, nationality, maritalStatus,
     preferredLanguage, motherTongue, communityId, subCommunityId, gacchaId, tithiCalendarTypeId,
     whatsapp, alternateContact, currentAddress, permanentAddress, sameAsPermanent, nativeVillage,
     bloodGroup, disability, medicalNotes, emergencyContact, profession, isVolunteer,
-    volunteerAreas, volunteerAvailability
+    volunteerAreas, volunteerAvailability, siblings
   } = req.body;
 
-  if (!firstName || !mobile || !middleName || !nationality || !pan || !aadhaar || !maritalStatus) {
-    throw ApiError.validation({
-      firstName: firstName ? [] : ['Required'],
-      middleName: middleName ? [] : ['Required'],
-      mobile: mobile ? [] : ['Required'],
-      nationality: nationality ? [] : ['Required'],
-      pan: pan ? [] : ['Required'],
-      aadhaar: aadhaar ? [] : ['Required'],
-      maritalStatus: maritalStatus ? [] : ['Required']
-    });
+  // Normalize before validating length/format (§Rule: Aadhaar 12 digits, PAN 10 chars) —
+  // this route has no Zod schema (unlike /register/jain), so the same checks
+  // members.dto.ts applies to registration must be duplicated here by hand.
+  const aadhaar = req.body.aadhaar ? String(req.body.aadhaar).replace(/\D/g, '') : req.body.aadhaar;
+  const pan = req.body.pan ? String(req.body.pan).trim().toUpperCase() : req.body.pan;
+
+  const errors: Record<string, string[]> = {};
+  if (!firstName) errors.firstName = ['Required'];
+  if (!middleName) errors.middleName = ['Required'];
+  if (!surname) errors.surname = ['Required'];
+  if (!mobile) errors.mobile = ['Required'];
+  if (!gender) errors.gender = ['Required'];
+  if (!dob) errors.dob = ['Required'];
+  if (!nationality) errors.nationality = ['Required'];
+  if (!pan) errors.pan = ['Required'];
+  else if (!/^[A-Z]{5}[0-9]{4}[A-Z]$/.test(pan)) errors.pan = ['Enter a valid 10-character PAN (e.g. ABCDE1234F)'];
+  if (!aadhaar) errors.aadhaar = ['Required'];
+  else if (!/^\d{12}$/.test(aadhaar)) errors.aadhaar = ['Aadhaar number must be exactly 12 digits'];
+  if (!maritalStatus) errors.maritalStatus = ['Required'];
+
+  if (!currentAddress) {
+    errors.currentAddress = ['Required'];
+  } else {
+    const addr = currentAddress as any;
+    if (!addr.line1 && !addr.address) errors['currentAddress.address'] = ['Required'];
+    if (!addr.country) errors['currentAddress.country'] = ['Required'];
+    if (!addr.pincode) errors['currentAddress.pincode'] = ['Required'];
+    if (!addr.area) errors['currentAddress.area'] = ['Required'];
+    if (!addr.city) errors['currentAddress.city'] = ['Required'];
+    if (!addr.district) errors['currentAddress.district'] = ['Required'];
+    if (!addr.state) errors['currentAddress.state'] = ['Required'];
+  }
+
+  if (!permanentAddress) {
+    errors.permanentAddress = ['Required'];
+  } else {
+    const addr = permanentAddress as any;
+    if (!addr.line1 && !addr.address) errors['permanentAddress.address'] = ['Required'];
+    if (!addr.country) errors['permanentAddress.country'] = ['Required'];
+    if (!addr.pincode) errors['permanentAddress.pincode'] = ['Required'];
+    if (!addr.area) errors['permanentAddress.area'] = ['Required'];
+    if (!addr.city) errors['permanentAddress.city'] = ['Required'];
+    if (!addr.district) errors['permanentAddress.district'] = ['Required'];
+    if (!addr.state) errors['permanentAddress.state'] = ['Required'];
+  }
+
+  if (category === 'JAIN') {
+    if (!motherTongue) errors.motherTongue = ['Required'];
+    if (!communityId) errors.communityId = ['Required'];
+    if (!subCommunityId) errors.subCommunityId = ['Required'];
+    if (!tithiCalendarTypeId) errors.tithiCalendarTypeId = ['Required'];
+  }
+
+  if (Object.keys(errors).length > 0) {
+    throw ApiError.validation(errors);
+  }
+
+  // Gaccha only exists under some Sub-Communities (e.g. Murtipujak) — require
+  // it whenever the chosen Sub-Community actually has Gacchas to pick from.
+  if (category === 'JAIN' && subCommunityId && !gacchaId) {
+    const gacchaCount = await prisma.gaccha.count({ where: { subCommunityId, deletedAt: null } });
+    if (gacchaCount > 0) {
+      throw ApiError.validation({ gacchaId: ['Gaccha is required for this sub-community'] });
+    }
   }
 
   const existing = await prisma.user.findUnique({ where: { mobile } });
@@ -179,6 +260,7 @@ export const adminCreateMember = asyncHandler(async (req: Request, res: Response
         profession: profession || undefined,
         isVolunteer: !!isVolunteer,
         volunteerAreas: volunteerAreas ? (volunteerAreas as Prisma.InputJsonValue) : undefined,
+        siblings: Array.isArray(siblings) && siblings.length > 0 ? (siblings as Prisma.InputJsonValue) : undefined,
         volunteerAvailability: volunteerAvailability || undefined,
         status: 'INACTIVE',
         isAutoCreated: true,
@@ -284,6 +366,7 @@ export const adminUpdateMember = asyncHandler(async (req: Request, res: Response
     isCritical: false,
   });
 
+  (updated as any)._resolvedSiblingNames = await membersService.resolveSiblingNames(updated.siblings);
   return ok(res, serializeMemberFull(updated));
 });
 

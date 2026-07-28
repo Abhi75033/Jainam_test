@@ -13,6 +13,21 @@ const createOpportunitySchema = z.object({
     role: z.string().min(1),
     details: z.string().optional(),
     areaId: z.string().optional(),
+    // §51/#54: fields the create-opportunity form already collected but the
+    // backend never had a place to store — they were silently dropped by the
+    // validator (which only allowed organizationId/role/details/areaId).
+    date: z.coerce.date().optional(),
+    startTime: z.string().optional(),
+    endTime: z.string().optional(),
+    locationType: z.enum(['inside_temple', 'ground']).optional(),
+    locationAddress: z.string().optional(),
+    instructions: z.string().optional(),
+    contactPersonId: z.string().optional(),
+    // Multiple areas, each with its own required headcount (e.g. Cleanliness
+    // — 20, Event Support — 10).
+    roles: z
+      .array(z.object({ title: z.string().min(1), count: z.coerce.number().int().positive() }))
+      .optional(),
   }),
 });
 
@@ -24,22 +39,46 @@ async function requireMember(userId: string) {
   return member;
 }
 
+/** Combine each opportunity with its required vs. actually-participated (approved) headcount. */
+function withParticipation<T extends { roleRequirements: { requiredCount: number }[]; applications: { status: string }[] }>(o: T) {
+  const totalRequired = o.roleRequirements.reduce((sum, r) => sum + r.requiredCount, 0);
+  const participatedCount = o.applications.filter((a) => a.status === 'APPROVED').length;
+  return { ...o, totalRequired, participatedCount };
+}
+
 /** Volunteers (§5.20): org admins define opportunities; members browse + apply; admins approve/reject. */
 export const volunteerRoutes = Router();
 
 volunteerRoutes.post('/opportunities', requireAuth, requirePermission('VOLUNTEERS', 'CREATE'), scopeToOrganization, validate(createOpportunitySchema), asyncHandler(async (req: Request, res: Response) => {
-  const opportunity = await prisma.volunteerOpportunity.create({ data: { ...req.body, createdById: req.actor!.userId } });
-  return created(res, opportunity);
+  const { roles, ...rest } = req.body;
+  const opportunity = await prisma.$transaction(async (tx) => {
+    const row = await tx.volunteerOpportunity.create({ data: { ...rest, createdById: req.actor!.userId } });
+    if (Array.isArray(roles) && roles.length > 0) {
+      await tx.volunteerRoleRequirement.createMany({
+        data: roles.map((r: { title: string; count: number }) => ({ opportunityId: row.id, title: r.title, requiredCount: r.count })),
+      });
+    }
+    return tx.volunteerOpportunity.findUniqueOrThrow({
+      where: { id: row.id },
+      include: { roleRequirements: true, applications: true },
+    });
+  });
+  return created(res, withParticipation(opportunity));
 }));
 
 volunteerRoutes.get('/opportunities', requireAuth, asyncHandler(async (req: Request, res: Response) => {
   const { organizationId } = req.query as { organizationId?: string };
   const opportunities = await prisma.volunteerOpportunity.findMany({
     where: { deletedAt: null, organizationId },
-    include: { organization: { select: { name: true, publicId: true } }, area: true },
+    include: {
+      organization: { select: { name: true, publicId: true } },
+      area: true,
+      roleRequirements: true,
+      applications: { select: { status: true } },
+    },
     orderBy: { createdAt: 'desc' },
   });
-  return ok(res, opportunities);
+  return ok(res, opportunities.map(withParticipation));
 }));
 
 volunteerRoutes.post('/opportunities/:opportunityId/apply', requireAuth, asyncHandler(async (req: Request, res: Response) => {

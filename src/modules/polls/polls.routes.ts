@@ -19,6 +19,15 @@ const createPollSchema = z.object({
 
 const voteSchema = z.object({ body: z.object({ optionIndex: z.number().int().min(0) }) });
 
+const updatePollSchema = z.object({
+  body: z.object({
+    question: z.string().min(1).optional(),
+    options: z.array(z.string().min(1)).min(2).max(10).optional(),
+    allowMultiple: z.boolean().optional(),
+    endsAt: z.coerce.date().optional(),
+  }),
+});
+
 /** Polls (§5.13): created by admins on feed posts, member voting, results. */
 export const pollRoutes = Router();
 
@@ -51,6 +60,30 @@ pollRoutes.post('/:pollId/vote', requireAuth, validate(voteSchema), asyncHandler
     create: { pollId: poll.id, memberId: member.id, optionIndex: req.body.optionIndex },
   });
   return created(res, vote);
+}));
+
+pollRoutes.patch('/:pollId', requireAuth, requirePermission('POLLS', 'EDIT'), validate(updatePollSchema), asyncHandler(async (req: Request, res: Response) => {
+  const existing = await prisma.poll.findUnique({ where: { id: req.params.pollId as string } });
+  if (!existing) throw ApiError.notFound('Poll not found');
+  const updated = await prisma.poll.update({ where: { id: req.params.pollId as string }, data: req.body });
+  return ok(res, updated);
+}));
+
+// Close a poll early — same effect as its endsAt already passing (blocks new votes).
+pollRoutes.post('/:pollId/close', requireAuth, requirePermission('POLLS', 'EDIT'), asyncHandler(async (req: Request, res: Response) => {
+  const existing = await prisma.poll.findUnique({ where: { id: req.params.pollId as string } });
+  if (!existing) throw ApiError.notFound('Poll not found');
+  const updated = await prisma.poll.update({ where: { id: req.params.pollId as string }, data: { endsAt: new Date() } });
+  return ok(res, updated);
+}));
+
+// Polls have no deletedAt of their own — they're 1:1 with a FeedPost, so
+// soft-deleting that post is what actually removes the poll from the feed.
+pollRoutes.delete('/:pollId', requireAuth, requirePermission('POLLS', 'DELETE'), asyncHandler(async (req: Request, res: Response) => {
+  const existing = await prisma.poll.findUnique({ where: { id: req.params.pollId as string } });
+  if (!existing) throw ApiError.notFound('Poll not found');
+  await prisma.feedPost.update({ where: { id: existing.feedPostId }, data: { deletedAt: new Date() } });
+  return ok(res, { deleted: true });
 }));
 
 pollRoutes.get('/:pollId/results', requireAuth, asyncHandler(async (req: Request, res: Response) => {

@@ -4,6 +4,7 @@ import { requireAuth, requirePermission, scopeToOrganization } from '@/middlewar
 import { validate } from '@/middlewares/validate';
 import { asyncHandler } from '@/utils/asyncHandler';
 import { ok, created } from '@/utils/apiResponse';
+import { ApiError } from '@/utils/ApiError';
 import { prisma } from '@/config/prisma';
 
 const createAlbumSchema = z.object({
@@ -11,6 +12,14 @@ const createAlbumSchema = z.object({
     organizationId: z.string().min(1),
     eventId: z.string().optional(),
     name: z.string().min(1),
+    description: z.string().optional(),
+  }),
+});
+
+const updateAlbumSchema = z.object({
+  body: z.object({
+    name: z.string().min(1).optional(),
+    description: z.string().optional(),
   }),
 });
 
@@ -65,6 +74,36 @@ const listOrgAlbums = asyncHandler(async (req: Request, res: Response) => {
 galleryRoutes.get('/org/:organizationId', requireAuth, listOrgAlbums);
 // Alias used by the admin panel
 galleryRoutes.get('/albums/org/:organizationId', requireAuth, listOrgAlbums);
+
+// §63: albums previously had Create + (per-image) Delete but no Edit and no
+// Delete-album at all.
+galleryRoutes.patch(
+  '/albums/:albumId',
+  requireAuth,
+  requirePermission('GALLERY', 'EDIT'),
+  validate(updateAlbumSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const album = await prisma.galleryAlbum.findUnique({ where: { id: req.params.albumId as string } });
+    if (!album || album.deletedAt) throw ApiError.notFound('Album not found');
+    const updated = await prisma.galleryAlbum.update({
+      where: { id: req.params.albumId as string },
+      data: { name: req.body.name, description: req.body.description },
+    });
+    return ok(res, updated);
+  }),
+);
+
+galleryRoutes.delete(
+  '/albums/:albumId',
+  requireAuth,
+  requirePermission('GALLERY', 'DELETE'),
+  asyncHandler(async (req: Request, res: Response) => {
+    const album = await prisma.galleryAlbum.findUnique({ where: { id: req.params.albumId as string } });
+    if (!album || album.deletedAt) throw ApiError.notFound('Album not found');
+    await prisma.galleryAlbum.update({ where: { id: req.params.albumId as string }, data: { deletedAt: new Date() } });
+    return ok(res, { deleted: true });
+  }),
+);
 
 galleryRoutes.delete(
   '/images/:imageId',

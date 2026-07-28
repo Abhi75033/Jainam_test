@@ -6,14 +6,27 @@ import * as staffService from './staff.service';
 import { prisma } from '@/config/prisma';
 import { recordAudit, auditContextFromRequest } from '@/engines/audit/audit.service';
 import { encryptField } from '@/utils/encryption';
+import { assertGrantWithinActorPermissions } from '@/engines/rbac/permission.service';
 
 export const createStaff = asyncHandler(async (req: Request, res: Response) => {
+  // Cascading tab-access (§4.2): the acting Admin/Staff may only grant a new
+  // staff member modules/actions they themselves currently hold.
+  if (req.body.modulePermissions?.length) {
+    assertGrantWithinActorPermissions(
+      (req as any).effectivePermissions,
+      req.body.modulePermissions,
+      req.body.organizationId,
+    );
+  }
   const staff = await staffService.createStaff({ ...req.body, createdById: req.actor!.userId });
   await recordAudit({ ...auditContextFromRequest(req), organizationId: req.body.organizationId, module: 'STAFF', action: 'CREATE', entityType: 'Staff', entityId: staff.id, after: staff });
   return created(res, staff);
 });
 
 export const updateModulePermissions = asyncHandler(async (req: Request, res: Response) => {
+  // Cascading tab-access (§4.2): cannot grant a module/action to a staff
+  // member that the acting Admin/Staff does not themselves currently hold.
+  assertGrantWithinActorPermissions((req as any).effectivePermissions, req.body.permissions);
   const permissions = await staffService.updateStaffModulePermissions(req.params.staffId as string, req.body.permissions, req.actor!.userId);
   await recordAudit({ ...auditContextFromRequest(req), module: 'STAFF', action: 'PERMISSION_CHANGE', entityType: 'Staff', entityId: req.params.staffId as string, after: permissions, isCritical: true });
   return ok(res, permissions);

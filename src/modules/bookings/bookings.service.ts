@@ -26,6 +26,14 @@ export async function createBookingItem(input: Record<string, unknown> & { organ
   });
 }
 
+export async function listBookingItems(organizationId: string) {
+  return prisma.bookingItem.findMany({
+    where: { organizationId, deletedAt: null },
+    select: { id: true, name: true, categoryId: true, type: true, status: true },
+    orderBy: { name: 'asc' },
+  });
+}
+
 export async function updateBookingItem(bookingItemId: string, input: Record<string, unknown>, updatedById: string) {
   const { images, availabilityConfig, bankDetails, ...rest } = input as any;
   return prisma.bookingItem.update({

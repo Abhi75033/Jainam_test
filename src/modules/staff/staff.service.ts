@@ -26,6 +26,8 @@ interface CreateStaffInput {
   dob?: Date;
   gender?: string;
   permanentAddress?: Record<string, unknown>;
+  departmentSpecify?: string;
+  designationSpecify?: string;
 }
 
 export async function createStaff(input: CreateStaffInput) {
@@ -83,8 +85,10 @@ export async function createStaff(input: CreateStaffInput) {
         userId,
         memberId,
         organizationId: input.organizationId,
-        departmentId: input.departmentId,
-        designationId: input.designationId,
+        departmentId: input.departmentId === "OTHER" ? null : input.departmentId,
+        designationId: input.designationId === "OTHER" ? null : input.designationId,
+        departmentSpecify: input.departmentSpecify,
+        designationSpecify: input.designationSpecify,
         joiningDate: input.joiningDate,
         category: input.category,
         categorySpecify: input.categorySpecify,

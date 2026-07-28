@@ -31,6 +31,11 @@ eventRoutes.get('/org/:organizationId', requireAuth, requirePermission('EVENTS',
 // for non-Super-Admin inside the service with the "raise support ticket" message (§5.9)
 eventRoutes.post('/', requireAuth, requirePermission('EVENTS', 'CREATE'), scopeToOrganization, validate(createEventSchema), eventsController.createEvent);
 eventRoutes.get('/member', requireAuth, validate(memberEventsQuerySchema), eventsController.memberEvents);
+// §76 business rule: "changes to a linked MS profile automatically reflect
+// in the Event" — implemented as a live query (same pattern as the
+// Chaturmas "linked MS history" fix) rather than a synced copy, so there's
+// nothing to keep in sync or get stale.
+eventRoutes.get('/monk/:monkId', requireAuth, eventsController.listEventsForMonk);
 eventRoutes.get('/:eventId', requireAuth, eventsController.getEvent);
 eventRoutes.patch('/:eventId', requireAuth, requirePermission('EVENTS', 'EDIT'), validate(updateEventSchema), eventsController.updateEvent);
 eventRoutes.post('/:eventId/transition', requireAuth, requirePermission('EVENTS', 'EDIT'), validate(transitionSchema), eventsController.transitionEvent);

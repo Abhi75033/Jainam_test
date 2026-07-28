@@ -100,6 +100,35 @@ export const assignAdminOrganizations = asyncHandler(async (req: Request, res: R
   return ok(res, rows);
 });
 
+export const updateAdminModules = asyncHandler(async (req: Request, res: Response) => {
+  const overrides = await adminAccountsService.setAdminModuleGrants(req.params.userId as string, req.body.modules, req.actor!.userId);
+  await recordAudit({
+    ...auditContextFromRequest(req),
+    module: 'SETTINGS',
+    action: 'PERMISSION_CHANGE',
+    entityType: 'AdminAccount',
+    entityId: req.params.userId as string,
+    after: { modules: req.body.modules },
+    isCritical: true,
+  });
+  return ok(res, { modules: req.body.modules, overrides });
+});
+
+export const setAdminActiveStatus = asyncHandler(async (req: Request, res: Response) => {
+  const targetUserId = req.params.userId as string;
+  const updated = await adminAccountsService.setAdminActiveStatus(targetUserId, Boolean(req.body.active), req.actor!.userId);
+  await recordAudit({
+    ...auditContextFromRequest(req),
+    module: 'SETTINGS',
+    action: 'STATUS_CHANGE',
+    entityType: 'AdminAccount',
+    entityId: targetUserId,
+    after: { status: updated.status },
+    isCritical: true,
+  });
+  return ok(res, { userId: updated.id, status: updated.status });
+});
+
 export const listAdmins = asyncHandler(async (req: Request, res: Response) => {
   const admins = await prisma.user.findMany({
     where: {
@@ -118,6 +147,7 @@ export const listAdmins = asyncHandler(async (req: Request, res: Response) => {
       primaryRoleKey: true,
       status: true,
       createdAt: true,
+      createdById: true,
       userOrganizations: {
         select: {
           id: true,
@@ -136,7 +166,18 @@ export const listAdmins = asyncHandler(async (req: Request, res: Response) => {
     },
     orderBy: { createdAt: 'desc' },
   });
-  return ok(res, admins);
+
+  // §4.1: surface each Admin's currently effective tabs (role defaults, as
+  // narrowed by any Super-Admin-set overrides) so the UI can render per-admin
+  // checkboxes without a separate round-trip per row.
+  const withModules = await Promise.all(
+    admins.map(async (admin) => ({
+      ...admin,
+      grantedModules: listAssignedModules(await loadEffectivePermissions(admin.id)),
+    })),
+  );
+
+  return ok(res, withModules);
 });
 
 export const deleteAdminAccount = asyncHandler(async (req: Request, res: Response) => {

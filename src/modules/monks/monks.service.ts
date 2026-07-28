@@ -2,12 +2,44 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '@/config/prisma';
 import { ApiError } from '@/utils/ApiError';
 import { nextPublicId } from '@/engines/idGenerator/id.service';
+import { enqueueNotification } from '@/engines/notification/notification.service';
 
 /**
  * Monk / MS profiles (§5.4). Shared-profile rule: editable by ALL temple
  * admins (collaborative), delete by Super Admin only, every edit audit-logged.
  * The audit call lives in the controller so it captures actor/IP context.
  */
+
+/** Fire-and-forget: enqueue IN_APP + PUSH notifications to all followers of a monk. */
+async function notifyMonkFollowers(
+  monkId: string,
+  templateKey: string,
+  title: string,
+  body: string,
+  data: Record<string, unknown>,
+): Promise<void> {
+  try {
+    const follows = await prisma.monkFollow.findMany({
+      where: { monkId },
+      include: { member: { select: { userId: true } } },
+    });
+    const jobs = follows.map((f) =>
+      enqueueNotification({
+        userId: f.member.userId,
+        templateKey,
+        category: 'SERVICE',
+        channels: ['IN_APP', 'PUSH'],
+        to: { IN_APP: f.member.userId, PUSH: f.member.userId },
+        subject: title,
+        body,
+        data,
+      }),
+    );
+    await Promise.allSettled(jobs);
+  } catch (err) {
+    console.error(`[monks.service] Failed to notify followers for monk ${monkId}:`, err);
+  }
+}
 
 export async function createMonk(input: Record<string, unknown> & { createdById: string }) {
   const { createdById, emergencyContact, ...rest } = input as any;
@@ -62,6 +94,44 @@ export async function updateMonk(monkId: string, input: Record<string, unknown>,
     data: { ...rest, emergencyContact: emergencyContact as Prisma.InputJsonValue, updatedById },
   });
 
+  // §C2: each Timeline milestone becomes its own feed post (instead of a
+  // private Json blob nothing ever surfaced) — only for entries that weren't
+  // already present before this save, so unrelated profile edits don't
+  // re-post the same milestones every time.
+  if (Array.isArray(rest.timeline)) {
+    try {
+      const { createAutoFeedCard } = await import('@/modules/feed/feed.service');
+      const existingTimeline = Array.isArray(existing.timeline) ? (existing.timeline as any[]) : [];
+      const existingKeys = new Set(existingTimeline.map((e) => JSON.stringify(e)));
+      const newEntries = (rest.timeline as any[]).filter((e) => e?.eventName && !existingKeys.has(JSON.stringify(e)));
+
+      if (newEntries.length > 0) {
+        const categoryRow = await prisma.feedCategory.findUnique({ where: { name: 'Monk Updates' } });
+        const visibilityConfig = {
+          isPublic: false,
+          community: {
+            communityIds: monk.communityId ? [monk.communityId] : [],
+            subCommunityIds: monk.subCommunityId ? [monk.subCommunityId] : [],
+            gacchaIds: monk.gacchaId ? [monk.gacchaId] : [],
+          },
+        };
+        for (const entry of newEntries) {
+          await createAutoFeedCard({
+            sourceModule: 'MONK_TIMELINE',
+            sourceId: monk.id,
+            title: entry.eventName,
+            description: [entry.place, entry.description].filter(Boolean).join(' — ') || undefined,
+            coverUrl: monk.photoUrl || undefined,
+            visibilityConfig,
+            categoryId: categoryRow?.id,
+          });
+        }
+      }
+    } catch (err) {
+      console.error('Failed to create timeline feed posts for monk update:', err);
+    }
+  }
+
   try {
     const { createAutoFeedCard } = await import('@/modules/feed/feed.service');
     const categoryRow = await prisma.feedCategory.findUnique({ where: { name: 'Monk Updates' } });
@@ -88,8 +158,18 @@ export async function updateMonk(monkId: string, input: Record<string, unknown>,
     console.error('Failed to create auto feed card for monk update:', err);
   }
 
+  // Notify all followers about the profile update (fire-and-forget)
+  void notifyMonkFollowers(
+    monk.id,
+    'monk.profile_updated',
+    `${monk.dikshaName} — Profile Updated`,
+    `The profile of ${monk.dikshaName} has been updated on JiNANAM. Tap to view the latest details.`,
+    { monkId: monk.id, monkPublicId: monk.publicId, dikshaName: monk.dikshaName },
+  );
+
   return monk;
 }
+
 
 export async function getMonk(monkId: string) {
   const monk = await prisma.monkProfile.findFirst({
@@ -114,8 +194,21 @@ export async function listMonks(filters: { templeId?: string; groupId?: string; 
       currentTempleId: filters.templeId,
       groupId: filters.groupId,
       gender: filters.gender,
-      dikshaName: filters.search ? { contains: filters.search, mode: 'insensitive' } : undefined,
+      // §C3: search matches the monk's own name/id OR their current temple's
+      // id/name, so an admin who only knows a temple's ID can find every monk
+      // stationed there from the same search box.
+      ...(filters.search
+        ? {
+            OR: [
+              { dikshaName: { contains: filters.search, mode: 'insensitive' as const } },
+              { publicId: { contains: filters.search, mode: 'insensitive' as const } },
+              { currentTemple: { publicId: { contains: filters.search, mode: 'insensitive' as const } } },
+              { currentTemple: { name: { contains: filters.search, mode: 'insensitive' as const } } },
+            ],
+          }
+        : {}),
     },
+    include: { currentTemple: { select: { id: true, publicId: true, name: true, city: true } } },
     orderBy: { dikshaName: 'asc' },
   });
 }

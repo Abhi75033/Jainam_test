@@ -68,3 +68,11 @@ export const createAdminAccountSchema = z.object({
 export const assignAdminOrgsSchema = z.object({
   body: z.object({ organizationIds: z.array(z.string()).min(1) }),
 });
+
+export const updateAdminModulesSchema = z.object({
+  body: z.object({ modules: z.array(z.string()) }),
+});
+
+export const setAdminActiveStatusSchema = z.object({
+  body: z.object({ active: z.boolean() }),
+});

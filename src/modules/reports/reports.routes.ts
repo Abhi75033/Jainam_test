@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
-import { requireAuth, requirePermission, scopeToOrganization } from '@/middlewares/auth';
+import { requireAuth, requirePermission, requireRole, scopeToOrganization } from '@/middlewares/auth';
 import { validate } from '@/middlewares/validate';
 import { asyncHandler } from '@/utils/asyncHandler';
 import { ok } from '@/utils/apiResponse';
@@ -321,6 +321,39 @@ reportRoutes.get(
       totalNonJain,
       total: members.length,
       activePercent: members.length > 0 ? Math.round((active / members.length) * 100) : 0,
+      chartData,
+    });
+  }),
+);
+
+/** §G7: Admin accounts summary — role/status breakdown, parallel to the Member enrollment report. Super Admin only (platform-wide, not org-scoped). */
+reportRoutes.get(
+  '/summary/admins',
+  requireAuth,
+  requireRole('SUPER_ADMIN'),
+  asyncHandler(async (_req: Request, res: Response) => {
+    const admins = await prisma.user.findMany({
+      where: {
+        primaryRoleKey: { in: ['TEMPLE_ADMIN', 'DHARAMSHALA_ADMIN', 'JAIN_CENTER_ADMIN', 'MONK_ADMIN'] },
+        deletedAt: null,
+      },
+      select: { primaryRoleKey: true, status: true, createdAt: true },
+    });
+
+    const roleMap: Record<string, number> = {};
+    for (const a of admins) {
+      roleMap[a.primaryRoleKey] = (roleMap[a.primaryRoleKey] || 0) + 1;
+    }
+    const chartData = Object.entries(roleMap).map(([name, count]) => ({ name, count }));
+
+    const active = admins.filter((a) => a.status === 'ACTIVE').length;
+    const inactive = admins.length - active;
+
+    return ok(res, {
+      total: admins.length,
+      active,
+      inactive,
+      activePercent: admins.length > 0 ? Math.round((active / admins.length) * 100) : 0,
       chartData,
     });
   }),

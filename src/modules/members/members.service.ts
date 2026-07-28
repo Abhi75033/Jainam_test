@@ -85,6 +85,7 @@ interface RegisterMemberInput {
   govtDocuments?: { docType: string; docNumber: string; imageUrl?: string }[];
   interests?: string[];
   familyMembers?: { fullName?: string; name?: string; relationship: string; mobile: string }[];
+  siblings?: { linkProfile?: boolean; siblingMemberId?: string; fullName?: string; relationship?: string }[];
 }
 
 const ADMIN_ROLES = ['SUPER_ADMIN', 'TEMPLE_ADMIN', 'DHARAMSHALA_ADMIN', 'JAIN_CENTER_ADMIN', 'MONK_ADMIN'];
@@ -100,6 +101,16 @@ export async function registerMember(input: RegisterMemberInput) {
 
   if (input.category === 'JAIN' && !input.communityId) {
     throw ApiError.validation({ communityId: ['Community is required for Jain members'] });
+  }
+
+  // Gaccha only exists under some Sub-Communities (e.g. Murtipujak) — require it
+  // whenever the chosen Sub-Community actually has Gacchas to pick from, so the
+  // field can't be silently skipped when it's genuinely applicable.
+  if (input.category === 'JAIN' && input.subCommunityId && !input.gacchaId) {
+    const gacchaCount = await prisma.gaccha.count({ where: { subCommunityId: input.subCommunityId, deletedAt: null } });
+    if (gacchaCount > 0) {
+      throw ApiError.validation({ gacchaId: ['Gaccha is required for this sub-community'] });
+    }
   }
 
   let aadhaarHash: string | null = null;
@@ -158,6 +169,7 @@ export async function registerMember(input: RegisterMemberInput) {
         isVolunteer: input.isVolunteer ?? false,
         volunteerAreas: (input.volunteerAreas ?? undefined) as Prisma.InputJsonValue,
         volunteerAvailability: input.volunteerAvailability,
+        siblings: (input.siblings ?? undefined) as Prisma.InputJsonValue,
         currencyCode: currencyForCountry(country),
         status: 'ACTIVE',
         activatedAt: new Date(),
@@ -268,8 +280,30 @@ export async function getMemberByPublicId(publicId: string) {
   return member;
 }
 
+/** §B10: resolve linked sibling profile ids to their current display name, for combining with `relationship` at render time. */
+export async function resolveSiblingNames(siblings: unknown): Promise<Record<string, string>> {
+  if (!Array.isArray(siblings)) return {};
+  const ids = siblings
+    .filter((s): s is { linkProfile?: boolean; siblingMemberId?: string } => !!s && typeof s === 'object')
+    .filter((s) => s.linkProfile && s.siblingMemberId)
+    .map((s) => s.siblingMemberId as string);
+  if (ids.length === 0) return {};
+
+  const members = await prisma.member.findMany({ where: { id: { in: ids } }, select: { id: true, fullName: true } });
+  return Object.fromEntries(members.map((m) => [m.id, m.fullName]));
+}
+
 export async function updateMemberProfile(memberId: string, input: Partial<RegisterMemberInput>) {
   const existing = await prisma.member.findUniqueOrThrow({ where: { id: memberId } });
+
+  // Only enforce Gaccha-required when the Sub-Community is actually being
+  // changed in this update — untouched fields shouldn't retroactively fail.
+  if (input.subCommunityId !== undefined && !input.gacchaId) {
+    const gacchaCount = await prisma.gaccha.count({ where: { subCommunityId: input.subCommunityId, deletedAt: null } });
+    if (gacchaCount > 0) {
+      throw ApiError.validation({ gacchaId: ['Gaccha is required for this sub-community'] });
+    }
+  }
 
   const fullName = input.firstName || input.middleName || input.surname
     ? [input.firstName ?? existing.firstName, input.middleName ?? existing.middleName, input.surname ?? existing.surname].filter(Boolean).join(' ')
@@ -320,6 +354,7 @@ export async function updateMemberProfile(memberId: string, input: Partial<Regis
       isVolunteer: input.isVolunteer,
       volunteerAreas: input.volunteerAreas as Prisma.InputJsonValue,
       volunteerAvailability: input.volunteerAvailability,
+      siblings: input.siblings as Prisma.InputJsonValue,
       updatedById: memberId,
     },
   });
@@ -527,6 +562,121 @@ export async function addFamilyMember(primaryMemberId: string, input: { name: st
   }
 
   return link;
+}
+
+/**
+ * Admin-driven link between two ALREADY-EXISTING members (as opposed to
+ * addFamilyMember above, which is a member's own self-service "add someone by
+ * mobile number, creating them if needed" flow, and always links to the
+ * *caller's own* profile). This lets an Admin/Super Admin decide that two
+ * unrelated existing member records are actually family and link them
+ * directly by public ID, without creating anything new.
+ */
+export async function linkExistingFamilyMembers(input: {
+  primaryMemberPublicId: string;
+  relatedMemberPublicId: string;
+  relationshipTypeId: string;
+}) {
+  if (input.primaryMemberPublicId === input.relatedMemberPublicId) {
+    throw ApiError.validation({ relatedMemberPublicId: ['Cannot link a member to themselves'] });
+  }
+
+  const [primary, related] = await Promise.all([
+    prisma.member.findUnique({ where: { publicId: input.primaryMemberPublicId } }),
+    prisma.member.findUnique({ where: { publicId: input.relatedMemberPublicId } }),
+  ]);
+  if (!primary) throw ApiError.notFound(`No member found for ID ${input.primaryMemberPublicId}`);
+  if (!related) throw ApiError.notFound(`No member found for ID ${input.relatedMemberPublicId}`);
+
+  const existingLink = await prisma.familyMember.findFirst({
+    where: {
+      OR: [
+        { primaryMemberId: primary.id, relatedMemberId: related.id },
+        { primaryMemberId: related.id, relatedMemberId: primary.id },
+      ],
+    },
+  });
+  if (existingLink) throw ApiError.conflict('These two members are already linked as family');
+
+  const link = await prisma.familyMember.create({
+    data: { primaryMemberId: primary.id, relatedMemberId: related.id, relationshipTypeId: input.relationshipTypeId },
+    include: {
+      primaryMember: { select: { publicId: true, fullName: true, mobile: true, photoUrl: true } },
+      relatedMember: { select: { publicId: true, fullName: true, mobile: true, photoUrl: true } },
+      relationshipType: { select: { name: true } },
+    },
+  });
+
+  await enqueueNotification({
+    userId: related.userId,
+    templateKey: 'FAMILY_MEMBER_ADDED',
+    category: 'SERVICE',
+    to: { PUSH: related.userId, IN_APP: related.userId },
+    body: `${primary.fullName} was linked to you as family on JiNANAM by the administration.`,
+  });
+
+  return link;
+}
+
+/**
+ * Admin-wide directory of every family link across every member — the admin
+ * Family Management page previously only had access to GET /family/my (the
+ * logged-in caller's own links), which meant an admin had no way to see or
+ * search family groups that members had added themselves. Grouped by the
+ * primary member so the UI can render one card per family unit.
+ */
+export async function listAllFamilyLinks(params: { q?: string; page?: number; pageSize?: number }) {
+  const page = params.page && params.page > 0 ? params.page : 1;
+  const pageSize = params.pageSize && params.pageSize > 0 ? Math.min(params.pageSize, 200) : 50;
+
+  const memberWhere: Prisma.MemberWhereInput | undefined = params.q
+    ? {
+        OR: [
+          { fullName: { contains: params.q, mode: 'insensitive' } },
+          { mobile: { contains: params.q } },
+          { publicId: { contains: params.q, mode: 'insensitive' } },
+        ],
+      }
+    : undefined;
+
+  const where: Prisma.FamilyMemberWhereInput = memberWhere
+    ? { OR: [{ primaryMember: memberWhere }, { relatedMember: memberWhere }] }
+    : {};
+
+  const [total, links] = await Promise.all([
+    prisma.familyMember.count({ where }),
+    prisma.familyMember.findMany({
+      where,
+      include: {
+        primaryMember: { select: { publicId: true, fullName: true, mobile: true, photoUrl: true, status: true } },
+        relatedMember: { select: { publicId: true, fullName: true, mobile: true, photoUrl: true, status: true } },
+        relationshipType: { select: { name: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+    }),
+  ]);
+
+  // Group by primary member so the admin UI can render one family unit per card.
+  const groups = new Map<string, { primaryMember: unknown; links: unknown[] }>();
+  for (const link of links) {
+    const key = link.primaryMember.publicId;
+    if (!groups.has(key)) groups.set(key, { primaryMember: link.primaryMember, links: [] });
+    groups.get(key)!.links.push({
+      id: link.id,
+      relation: link.relationshipType.name,
+      member: link.relatedMember,
+      createdAt: link.createdAt,
+    });
+  }
+
+  return {
+    total,
+    page,
+    pageSize,
+    groups: Array.from(groups.values()),
+  };
 }
 
 /** Called on a family member's first successful OTP login to complete activation (§5.2). */

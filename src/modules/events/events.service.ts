@@ -6,6 +6,7 @@ import { getQueue, QUEUE_NAMES } from '@/jobs/queues';
 import { enqueueNotification } from '@/engines/notification/notification.service';
 import { getEligibleMemberIds } from '@/engines/visibility/visibility.service';
 import { MAX_EVENT_GALLERY_IMAGES } from '@/config/constants';
+import { env } from '@/config/env';
 
 // -----------------------------------------------------------------------------
 // Creation & lifecycle (§5.9)
@@ -22,7 +23,7 @@ export async function createEvent(input: Record<string, unknown> & { organizatio
     );
   }
 
-  return prisma.$transaction(async (tx) => {
+  const event = await prisma.$transaction(async (tx) => {
     const publicId = await nextPublicId('EVENT', tx);
     return tx.event.create({
       data: {
@@ -36,6 +37,7 @@ export async function createEvent(input: Record<string, unknown> & { organizatio
       },
     });
   });
+  return { ...event, shareUrl: `${env.APP_DEEP_LINK_BASE_URL}/event/${event.publicId}` };
 }
 
 const LIFECYCLE_TRANSITIONS: Record<EventStatus, EventStatus[]> = {
@@ -264,6 +266,12 @@ export async function rsvp(eventId: string, memberId: string, attendeeCount: num
     let waitingListPosition: number | null = null;
 
     if (event.rsvpCapacity) {
+      // Lock this event's row for the transaction so concurrent RSVPs against
+      // the same capacity are serialized instead of racing — without this,
+      // two requests can both read the aggregate before either commits and
+      // both get CONFIRMED, oversubscribing the event (same class of bug
+      // fixed for paid ticket purchases in tickets.service.ts).
+      await tx.$executeRaw`SELECT id FROM "events" WHERE id = ${eventId} FOR UPDATE`;
       const agg = await tx.eventRsvp.aggregate({ where: { eventId, status: 'CONFIRMED' }, _sum: { attendeeCount: true } });
       const confirmed = agg._sum.attendeeCount ?? 0;
       if (confirmed + attendeeCount > event.rsvpCapacity) {
@@ -484,7 +492,30 @@ export async function getEvent(eventIdOrPublicId: string) {
     },
   });
   if (!event) throw ApiError.notFound('Event not found');
-  return event;
+  // §74: shareable deep link — opens the app if installed, otherwise the
+  // member app's own deep-link handler redirects to the store. Generation
+  // is all that's in scope here; the open-in-app/redirect behavior lives in
+  // the member app, which doesn't exist in this repo.
+  return { ...event, shareUrl: `${env.APP_DEEP_LINK_BASE_URL}/event/${event.publicId}` };
+}
+
+/** §76: events a given MS profile is linked to — queried live, never a stale synced copy. */
+export async function listEventsForMonk(monkId: string) {
+  const events = await prisma.event.findMany({
+    where: { deletedAt: null, linkedMonkIds: { array_contains: monkId } },
+    orderBy: { startAt: 'desc' },
+    include: { organization: { select: { id: true, name: true, publicId: true } }, category: { select: { name: true } } },
+  });
+  return events.map((e) => ({
+    id: e.id,
+    publicId: e.publicId,
+    title: e.title,
+    startAt: e.startAt,
+    endAt: e.endAt,
+    status: e.status,
+    orgName: e.organization?.name ?? null,
+    categoryName: e.category?.name ?? null,
+  }));
 }
 
 // -----------------------------------------------------------------------------
