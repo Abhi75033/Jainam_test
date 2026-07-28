@@ -8,6 +8,22 @@ import { getEligibleMemberIds } from '@/engines/visibility/visibility.service';
 import { MAX_EVENT_GALLERY_IMAGES } from '@/config/constants';
 import { env } from '@/config/env';
 
+/**
+ * §74: every event gets a unique shareable deep link (e.g.
+ * https://jinanam.app/event/JFEV000154). Opening it in the member app or
+ * redirecting to the store when the app isn't installed is handled by the
+ * member app's own link handler, which lives outside this repo — generating
+ * and exposing the link is what's in scope here.
+ */
+export function eventShareUrl(publicId: string) {
+  return `${env.APP_DEEP_LINK_BASE_URL}/event/${publicId}`;
+}
+
+/** Attach shareUrl to a list of events so share/copy works straight off the list view. */
+export function withShareUrls<T extends { publicId: string }>(events: T[]) {
+  return events.map((e) => ({ ...e, shareUrl: eventShareUrl(e.publicId) }));
+}
+
 // -----------------------------------------------------------------------------
 // Creation & lifecycle (§5.9)
 // Free events: org admins. Paid events: SUPER ADMIN ONLY — org admins get a
@@ -37,7 +53,7 @@ export async function createEvent(input: Record<string, unknown> & { organizatio
       },
     });
   });
-  return { ...event, shareUrl: `${env.APP_DEEP_LINK_BASE_URL}/event/${event.publicId}` };
+  return { ...event, shareUrl: eventShareUrl(event.publicId) };
 }
 
 const LIFECYCLE_TRANSITIONS: Record<EventStatus, EventStatus[]> = {
@@ -496,7 +512,7 @@ export async function getEvent(eventIdOrPublicId: string) {
   // member app's own deep-link handler redirects to the store. Generation
   // is all that's in scope here; the open-in-app/redirect behavior lives in
   // the member app, which doesn't exist in this repo.
-  return { ...event, shareUrl: `${env.APP_DEEP_LINK_BASE_URL}/event/${event.publicId}` };
+  return { ...event, shareUrl: eventShareUrl(event.publicId) };
 }
 
 /** §76: events a given MS profile is linked to — queried live, never a stale synced copy. */

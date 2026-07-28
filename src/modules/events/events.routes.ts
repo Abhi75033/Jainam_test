@@ -42,6 +42,9 @@ eventRoutes.post('/:eventId/transition', requireAuth, requirePermission('EVENTS'
 eventRoutes.post('/:eventId/cancel', requireAuth, requirePermission('EVENTS', 'EDIT'), validate(cancelSchema), eventsController.cancelEvent);
 eventRoutes.get('/:eventId/rsvps', requireAuth, requirePermission('EVENTS', 'VIEW'), eventsController.listRsvps);
 eventRoutes.get('/:eventId/rsvps/export', requireAuth, requirePermission('EVENTS', 'VIEW'), eventsController.exportRsvps);
+// §68 reports (Events spec Part 7/10). Revenue is Super-Admin-only per spec.
+eventRoutes.get('/:eventId/tickets/export', requireAuth, requirePermission('EVENTS', 'VIEW'), eventsController.exportTicketSales);
+eventRoutes.get('/reports/revenue/export', requireAuth, requireRole('SUPER_ADMIN'), eventsController.exportRevenue);
 
 // RSVP
 eventRoutes.post('/:eventId/rsvp', requireAuth, validate(rsvpSchema), eventsController.rsvp);

@@ -36,7 +36,7 @@ export const listAllEvents = asyncHandler(async (req: Request, res: Response) =>
     }),
     prisma.event.count({ where }),
   ]);
-  return ok(res, { items, total, page: parseInt(page), pageSize: parseInt(pageSize) });
+  return ok(res, { items: eventsService.withShareUrls(items), total, page: parseInt(page), pageSize: parseInt(pageSize) });
 });
 
 export const listOrgEvents = asyncHandler(async (req: Request, res: Response) => {
@@ -54,7 +54,7 @@ export const listOrgEvents = asyncHandler(async (req: Request, res: Response) =>
     }),
     prisma.event.count({ where }),
   ]);
-  return ok(res, { items, total, page: parseInt(page), pageSize: parseInt(pageSize) });
+  return ok(res, { items: eventsService.withShareUrls(items), total, page: parseInt(page), pageSize: parseInt(pageSize) });
 });
 
 export const updateEvent = asyncHandler(async (req: Request, res: Response) => {
@@ -198,6 +198,110 @@ export const exportRsvps = asyncHandler(async (req: Request, res: Response) => {
       { key: 'status', header: 'Status' },
       { key: 'waitingPosition', header: 'Waiting #' },
       { key: 'rsvpAt', header: 'RSVP At' },
+    ],
+  );
+});
+
+/**
+ * §68: Ticket Sales Report — one row per booking line, per the Events spec
+ * Part 7/10. Previously only the RSVP list had an export variant.
+ */
+export const exportTicketSales = asyncHandler(async (req: Request, res: Response) => {
+  const tickets = await prisma.ticket.findMany({
+    where: { eventId: req.params.eventId as string },
+    include: {
+      ticketCategory: { select: { name: true } },
+      buyerMember: { select: { publicId: true, fullName: true } },
+    },
+    orderBy: { createdAt: 'asc' },
+  });
+
+  const { sendListExport, parseExportFormat } = await import('@/utils/listExport');
+  return sendListExport(
+    res,
+    parseExportFormat(req.query.format),
+    'Ticket Sales Report',
+    tickets.map((t) => ({
+      bookingId: t.bookingGroupId ?? '',
+      ticketId: t.publicId,
+      category: t.ticketCategory?.name ?? '',
+      buyer: `${t.buyerMember.fullName} (${t.buyerMember.publicId})`,
+      attendee: t.attendeeName ?? '',
+      amount: Number(t.amount),
+      currency: t.currency,
+      status: t.status,
+      paymentRef: t.paymentRef ?? '',
+      bookedAt: t.createdAt.toISOString(),
+    })),
+    [
+      { key: 'bookingId', header: 'Booking ID' },
+      { key: 'ticketId', header: 'Ticket ID' },
+      { key: 'category', header: 'Category' },
+      { key: 'buyer', header: 'Buyer' },
+      { key: 'attendee', header: 'Attendee' },
+      { key: 'amount', header: 'Amount' },
+      { key: 'currency', header: 'Currency' },
+      { key: 'status', header: 'Payment Status' },
+      { key: 'paymentRef', header: 'Payment Ref' },
+      { key: 'bookedAt', header: 'Booked At' },
+    ],
+  );
+});
+
+/**
+ * §68: Revenue Report — Super Admin only, per the spec. Gross / refunds / net
+ * broken down by ticket category. "Refunded" here means tickets manually marked
+ * refunded by a Super Admin, since refunds in this platform are manual (§5.9).
+ */
+export const exportRevenue = asyncHandler(async (req: Request, res: Response) => {
+  const where: Record<string, unknown> = {};
+  if (req.query.eventId) where.eventId = req.query.eventId as string;
+
+  const tickets = await prisma.ticket.findMany({
+    where,
+    include: {
+      ticketCategory: { select: { name: true } },
+      event: { select: { title: true, publicId: true } },
+    },
+  });
+
+  // Aggregate per event + category so the report is readable rather than one
+  // row per ticket (the raw per-ticket view is the Ticket Sales report above).
+  const buckets = new Map<string, { event: string; category: string; sold: number; gross: number; refunds: number; currency: string }>();
+  for (const t of tickets) {
+    const key = `${t.eventId}::${t.ticketCategoryId}`;
+    const bucket = buckets.get(key) ?? {
+      event: `${t.event.title} (${t.event.publicId})`,
+      category: t.ticketCategory?.name ?? '',
+      sold: 0,
+      gross: 0,
+      refunds: 0,
+      currency: t.currency,
+    };
+    const amount = Number(t.amount);
+    if (t.status === 'REFUNDED_MANUAL') {
+      bucket.refunds += amount;
+    } else if (['PAYMENT_SUCCESSFUL', 'TICKET_GENERATED', 'CHECKED_IN'].includes(t.status)) {
+      bucket.sold += 1;
+      bucket.gross += amount;
+    }
+    buckets.set(key, bucket);
+  }
+
+  const { sendListExport, parseExportFormat } = await import('@/utils/listExport');
+  return sendListExport(
+    res,
+    parseExportFormat(req.query.format),
+    'Revenue Report',
+    Array.from(buckets.values()).map((b) => ({ ...b, net: b.gross - b.refunds })),
+    [
+      { key: 'event', header: 'Event' },
+      { key: 'category', header: 'Ticket Category' },
+      { key: 'currency', header: 'Currency' },
+      { key: 'sold', header: 'Tickets Sold' },
+      { key: 'gross', header: 'Gross Revenue' },
+      { key: 'refunds', header: 'Refunds' },
+      { key: 'net', header: 'Net Revenue' },
     ],
   );
 });

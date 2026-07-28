@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { requireAuth, requirePermission, scopeToOrganization } from '@/middlewares/auth';
 import { validate } from '@/middlewares/validate';
@@ -23,6 +24,27 @@ const createPostSchema = z.object({
     visibilityConfig: z.record(z.string(), z.unknown()).optional(),
     startAt: z.coerce.date().optional(),
     endAt: z.coerce.date().optional(),
+  }),
+});
+
+// §72: content-only update surface. organizationId / communityPageId / type /
+// sourceModule / sourceId are deliberately NOT editable — letting them through
+// would allow re-parenting a post to another org or disguising an AUTO card as
+// a MANUAL one (same mass-assignment class of bug fixed in Community Pages).
+const updatePostSchema = z.object({
+  body: z.object({
+    title: z.string().min(1).optional(),
+    description: z.string().optional(),
+    coverUrl: z.string().optional(),
+    images: z.array(z.string()).optional(),
+    videoUrl: z.string().optional(),
+    pdfUrl: z.string().optional(),
+    externalLink: z.string().optional(),
+    categoryId: z.string().optional(),
+    visibilityConfig: z.record(z.string(), z.unknown()).optional(),
+    startAt: z.coerce.date().optional(),
+    endAt: z.coerce.date().optional(),
+    isPinned: z.boolean().optional(),
   }),
 });
 
@@ -98,6 +120,66 @@ feedRoutes.get(
     if (!member) throw ApiError.notFound('Member profile not found');
     const post = await feedService.getPost(req.params.postId as string, member.id);
     return ok(res, post);
+  }),
+);
+
+/**
+ * §72: feed posts previously had no Edit and no Delete at all — once published,
+ * a post could never be corrected or removed (the only DELETE route on this
+ * module was the per-user bookmark toggle, which is unrelated to post lifecycle).
+ *
+ * Editing is restricted to MANUAL posts: AUTO cards mirror content owned by
+ * another module (events, notices, gallery…), so editing one here would silently
+ * desync it from its source record.
+ */
+feedRoutes.patch(
+  '/posts/:postId',
+  requireAuth,
+  requirePermission('FEED', 'EDIT'),
+  validate(updatePostSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const postId = req.params.postId as string;
+    const existing = await prisma.feedPost.findUnique({ where: { id: postId } });
+    if (!existing || existing.deletedAt) throw ApiError.notFound('Feed post not found');
+
+    if (existing.type !== 'MANUAL') {
+      throw ApiError.forbidden(
+        'Auto-generated feed cards mirror another module and cannot be edited here. Edit the source record instead.',
+      );
+    }
+    // Authors manage their own posts; Super Admin may edit any.
+    if (!req.actor!.isSuperAdmin && existing.authorUserId && existing.authorUserId !== req.actor!.userId) {
+      throw ApiError.forbidden('You can only edit feed posts you created.');
+    }
+
+    const { images, visibilityConfig, ...rest } = req.body;
+    const updated = await prisma.feedPost.update({
+      where: { id: postId },
+      data: {
+        ...rest,
+        ...(images !== undefined ? { images: images as Prisma.InputJsonValue } : {}),
+        ...(visibilityConfig !== undefined ? { visibilityConfig: visibilityConfig as Prisma.InputJsonValue } : {}),
+        // Keep the scheduled-activation flag consistent with any new startAt.
+        ...(rest.startAt !== undefined ? { isActive: new Date(rest.startAt) <= new Date() } : {}),
+      },
+    });
+    return ok(res, updated);
+  }),
+);
+
+// DELETE stays Super-Admin-only platform-wide (enforced inside requirePermission
+// per §3) — same convention as Announcements, Polls and Gallery.
+feedRoutes.delete(
+  '/posts/:postId',
+  requireAuth,
+  requirePermission('FEED', 'DELETE'),
+  asyncHandler(async (req: Request, res: Response) => {
+    const postId = req.params.postId as string;
+    const existing = await prisma.feedPost.findUnique({ where: { id: postId } });
+    if (!existing || existing.deletedAt) throw ApiError.notFound('Feed post not found');
+
+    await prisma.feedPost.update({ where: { id: postId }, data: { deletedAt: new Date(), isActive: false } });
+    return ok(res, { deleted: true });
   }),
 );
 
