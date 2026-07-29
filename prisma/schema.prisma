@@ -1789,6 +1789,7 @@ model Event {
   videoLinks       EventVideoLink[]
   feedback         EventFeedback[]
   seatingSections  SeatingSection[]
+  auditTrails      EventAuditTrail[]
 
   @@index([organizationId, status])
   @@index([lat, lng])
@@ -1934,6 +1935,7 @@ model EventGalleryImage {
   eventId   String
   event     Event    @relation(fields: [eventId], references: [id])
   imageUrl  String
+  albumName String?
   order     Int      @default(0)
   createdAt DateTime @default(now())
 
@@ -1941,10 +1943,12 @@ model EventGalleryImage {
 }
 
 model EventVideoLink {
-  id      String @id @default(cuid())
-  eventId String
-  event   Event  @relation(fields: [eventId], references: [id])
-  url     String
+  id        String  @id @default(cuid())
+  eventId   String
+  event     Event   @relation(fields: [eventId], references: [id])
+  url       String
+  albumName String?
+  title     String?
 
   @@map("event_video_links")
 }
@@ -1960,7 +1964,21 @@ model EventFeedback {
   createdAt DateTime @default(now())
 
   @@unique([eventId, memberId])
-  @@map("event_feedback")
+  @@map("event_feedbacks")
+}
+
+model EventAuditTrail {
+  id          String   @id @default(cuid())
+  eventId     String
+  event       Event    @relation(fields: [eventId], references: [id])
+  action      String
+  performedBy String
+  actorName   String?
+  actorRole   String?
+  changes     Json?
+  createdAt   DateTime @default(now())
+
+  @@map("event_audit_trails")
 }
 
 enum SupportTicketType {
@@ -2201,6 +2219,11 @@ model Tour {
   primaryMonk   MonkProfile?  @relation("PrimaryMonk", fields: [primaryMonkId], references: [id])
   monkGroupId   String?
   monkGroup     MonkGroup?    @relation(fields: [monkGroupId], references: [id])
+  tourType      String?
+  dharamshalaId String?
+  monkGroupName String?
+  monkGroupLeader String?
+  supportingMonks Json?
   createdById   String?
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
@@ -2318,6 +2341,7 @@ model TourRoomChangeLog {
   fromRoomId    String?
   toRoomId      String?
   changedById   String?
+  reason        String?
   changedAt     DateTime        @default(now())
 
   @@map("tour_room_change_logs")
@@ -2361,6 +2385,7 @@ model TourAttendance {
   participant   TourParticipant      @relation(fields: [participantId], references: [id])
   date          DateTime
   status        TourAttendanceStatus
+  remarks       String?
 
   @@unique([participantId, date])
   @@map("tour_attendance")
@@ -2664,10 +2689,28 @@ model CommunityPage {
   joinApprovalMode      String                 @default("MANUAL") // AUTO | MANUAL
   subscriptionPlan      String?
   subscriptionStatus    SubscriptionStatus     @default(ACTIVE)
+  subscriptionStartDate DateTime?
   subscriptionExpiresAt DateTime?
   createdById           String?
   createdAt             DateTime               @default(now())
   deletedAt             DateTime?
+
+  // Extended profile fields (§5.16)
+  orgType               String?   // Trust | Youth Group | NGO | Educational Institution | etc.
+  establishedYear       Int?
+  operatesFrom          String?   // Online | Office | Temple | Community
+  officeAddress         String?   // Shown only when operatesFrom != Online
+  googleMapsUrl         String?
+  googleFormName        String?
+  googleFormLink        String?
+  gallery               Json?     // String[] — up to 10 image URLs
+
+  // Visibility (§5.16 §3 §4)
+  communityVisibility   String?   @default("PUBLIC") // PUBLIC | MEMBERS_ONLY
+  geoVisibility         String?   @default("Global") // Global | Country | State | District | City | Area
+  geoCountry            String?
+  geoState              String?
+  geoCity               String?
 
   owners  CommunityPageOwner[]
   members CommunityPageMember[]

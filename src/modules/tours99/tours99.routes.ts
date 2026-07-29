@@ -188,6 +188,13 @@ tourRoutes.post('/:tourId/participants/:participantId/jatra', requireAuth, requi
   return ok(res, row);
 }));
 
+// §23: Single-screen Bulk Daily Entry endpoint
+tourRoutes.post('/:tourId/daily-jatra/bulk', requireAuth, requirePermission('TOURS', 'EDIT'), asyncHandler(async (req: Request, res: Response) => {
+  const { entries } = req.body as { entries: Array<{ participantId: string; date: Date; count: number; status?: 'PRESENT' | 'ABSENT' | 'NOT_WELL'; remarks?: string }> };
+  const rows = await toursService.enterBulkDailyJatraCounts(req.params.tourId as string, entries, req.actor!.userId);
+  return ok(res, rows);
+}));
+
 // Milestone progress summary for a participant (§5.19)
 tourRoutes.get('/:tourId/participants/:participantId/milestones', requireAuth, requirePermission('TOURS', 'VIEW'), asyncHandler(async (req: Request, res: Response) => {
   const progress = await toursService.participantMilestoneProgress(req.params.participantId as string);

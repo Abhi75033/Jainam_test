@@ -325,3 +325,26 @@ export async function getPost(postId: string, memberId: string) {
   if (!eligible && !cfg.isPublic) throw ApiError.notFound('Post not found');
   return post;
 }
+
+export async function createPoll(feedPostId: string, question: string, options: string[], endsAt?: Date) {
+  return prisma.poll.create({
+    data: {
+      feedPostId,
+      question,
+      options: options as Prisma.InputJsonValue,
+      endsAt,
+    },
+  });
+}
+
+export async function votePoll(pollId: string, memberId: string, optionIndex: number) {
+  const poll = await prisma.poll.findUnique({ where: { id: pollId } });
+  if (!poll) throw ApiError.notFound('Poll not found');
+  if (poll.endsAt && poll.endsAt < new Date()) throw ApiError.conflict('Poll has expired');
+
+  return prisma.pollVote.upsert({
+    where: { pollId_memberId: { pollId, memberId } },
+    update: { optionIndex },
+    create: { pollId, memberId, optionIndex },
+  });
+}

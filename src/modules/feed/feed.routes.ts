@@ -306,3 +306,26 @@ feedRoutes.get(
     })));
   })
 );
+
+// §4.11.4 Polls: Create Poll on a Feed Post
+feedRoutes.post(
+  '/posts/:postId/poll',
+  requireAuth,
+  asyncHandler(async (req: Request, res: Response) => {
+    const { question, options, endsAt } = req.body as { question: string; options: string[]; endsAt?: string };
+    const poll = await feedService.createPoll(req.params.postId as string, question, options, endsAt ? new Date(endsAt) : undefined);
+    return created(res, poll);
+  })
+);
+
+// §4.11.4 Polls: Vote on a Poll
+feedRoutes.post(
+  '/polls/:pollId/vote',
+  requireAuth,
+  asyncHandler(async (req: Request, res: Response) => {
+    const member = await prisma.member.findUnique({ where: { userId: req.actor!.userId } });
+    if (!member) throw ApiError.notFound('Member profile not found');
+    const vote = await feedService.votePoll(req.params.pollId as string, member.id, Number(req.body.optionIndex));
+    return ok(res, vote);
+  })
+);

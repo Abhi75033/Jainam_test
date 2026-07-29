@@ -5,8 +5,8 @@ export const submitManualDonationSchema = z.object({
     organizationId: z.string().min(1),
     totalAmount: z.number().positive(),
     currency: z.string().default('INR'),
-    transactionReference: z.string().min(1),
-    proofUrl: z.string().min(1),
+    transactionReference: z.string().optional().nullable(),
+    proofUrl: z.string().optional().nullable(),
     idempotencyKey: z.string().min(8).optional(),
     categorySplits: z
       .array(z.object({ donationCategoryId: z.string().min(1), amount: z.number().positive() }))

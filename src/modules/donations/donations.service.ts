@@ -29,8 +29,8 @@ export async function submitManualDonation(input: {
   memberId: string; // donor (self, or resolved from donorMemberPublicId by admin)
   totalAmount: number;
   currency: string;
-  transactionReference: string;
-  proofUrl: string;
+  transactionReference?: string | null;
+  proofUrl?: string | null;
   categorySplits: { donationCategoryId: string; amount: number }[];
   createdById: string;
 }) {
@@ -49,8 +49,8 @@ export async function submitManualDonation(input: {
         memberId: input.memberId,
         totalAmount: input.totalAmount,
         currency: input.currency,
-        transactionReference: input.transactionReference,
-        proofUrl: input.proofUrl,
+        transactionReference: input.transactionReference ?? null,
+        proofUrl: input.proofUrl ?? null,
         status: 'PENDING',
         createdById: input.createdById,
       },

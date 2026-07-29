@@ -21,11 +21,28 @@ const createPageSchema = z.object({
     visibilityConfig: z.record(z.string(), z.unknown()).optional(),
     joinApprovalMode: z.enum(['AUTO', 'MANUAL']).default('MANUAL'),
     ownerUserIds: z.array(z.string()).min(1),
+    // Extended profile fields
+    orgType: z.string().optional(),
+    establishedYear: z.coerce.number().int().min(1800).max(2100).optional(),
+    operatesFrom: z.enum(['Online', 'Office', 'Temple', 'Community']).optional(),
+    officeAddress: z.string().optional(),
+    googleMapsUrl: z.string().optional(),
+    googleFormName: z.string().optional(),
+    googleFormLink: z.string().optional(),
+    gallery: z.array(z.string()).max(10).optional(),
+    // Visibility
+    communityVisibility: z.enum(['PUBLIC', 'MEMBERS_ONLY']).default('PUBLIC'),
+    geoVisibility: z.enum(['Global', 'Country', 'State', 'District', 'City', 'Area']).default('Global'),
+    geoCountry: z.string().optional(),
+    geoState: z.string().optional(),
+    geoCity: z.string().optional(),
+    // Subscription
+    subscriptionStartDate: z.coerce.date().optional(),
+    subscriptionExpiresAt: z.coerce.date().optional(),
   }),
 });
 
-// Owner-editable subset only — excludes ownerUserIds/createdById/subscription* fields
-// (subscription is Super-Admin-only via the dedicated /subscription route below).
+// Owner-editable subset — excludes ownerUserIds, subscription*, geoVisibility
 const updatePageSchema = z.object({
   body: z.object({
     name: z.string().min(1).optional(),
@@ -38,19 +55,35 @@ const updatePageSchema = z.object({
     socialLinks: z.record(z.string(), z.unknown()).optional(),
     visibilityConfig: z.record(z.string(), z.unknown()).optional(),
     joinApprovalMode: z.enum(['AUTO', 'MANUAL']).optional(),
+    orgType: z.string().optional(),
+    establishedYear: z.coerce.number().int().min(1800).max(2100).optional(),
+    operatesFrom: z.enum(['Online', 'Office', 'Temple', 'Community']).optional(),
+    officeAddress: z.string().optional(),
+    googleMapsUrl: z.string().optional(),
+    googleFormName: z.string().optional(),
+    googleFormLink: z.string().optional(),
+    gallery: z.array(z.string()).max(10).optional(),
+  }),
+});
+
+// Super-Admin only — subscription + visibility + owner management
+const superAdminUpdateSchema = z.object({
+  body: z.object({
+    subscriptionPlan: z.string().optional(),
+    subscriptionStartDate: z.coerce.date().optional(),
+    subscriptionExpiresAt: z.coerce.date().optional(),
+    subscriptionStatus: z.enum(['ACTIVE', 'EXPIRING_SOON', 'EXPIRED', 'SUSPENDED']).optional(),
+    ownerUserIds: z.array(z.string()).optional(),
+    communityVisibility: z.enum(['PUBLIC', 'MEMBERS_ONLY']).optional(),
+    geoVisibility: z.enum(['Global', 'Country', 'State', 'District', 'City', 'Area']).optional(),
+    geoCountry: z.string().optional(),
+    geoState: z.string().optional(),
+    geoCity: z.string().optional(),
   }),
 });
 
 const membershipDecisionSchema = z.object({
   body: z.object({ memberId: z.string().min(1), decision: z.enum(['APPROVED', 'REJECTED']) }),
-});
-
-const subscriptionSchema = z.object({
-  body: z.object({
-    plan: z.string().optional(),
-    expiresAt: z.coerce.date().optional(),
-    status: z.enum(['ACTIVE', 'EXPIRING_SOON', 'EXPIRED', 'SUSPENDED']).optional(),
-  }),
 });
 
 async function requireMember(userId: string) {
@@ -61,10 +94,19 @@ async function requireMember(userId: string) {
 
 export const communityPageRoutes = Router();
 
-// List (any authenticated user; public pages directory)
-communityPageRoutes.get('/', requireAuth, asyncHandler(async (_req: Request, res: Response) => {
+// ─── List (with optional search/filter) ─────────────────────────────────────
+communityPageRoutes.get('/', requireAuth, asyncHandler(async (req: Request, res: Response) => {
+  const { search, categoryId, geoState, geoCity, status } = req.query as Record<string, string>;
+
   const rows = await prisma.communityPage.findMany({
-    where: { deletedAt: null },
+    where: {
+      deletedAt: null,
+      ...(search && { name: { contains: search, mode: 'insensitive' } }),
+      ...(categoryId && { categoryId }),
+      ...(geoState && { geoState: { contains: geoState, mode: 'insensitive' } }),
+      ...(geoCity && { geoCity: { contains: geoCity, mode: 'insensitive' } }),
+      ...(status && { subscriptionStatus: status as any }),
+    },
     include: {
       category: { select: { name: true } },
       _count: { select: { members: { where: { status: 'APPROVED' } }, posts: true } },
@@ -75,47 +117,88 @@ communityPageRoutes.get('/', requireAuth, asyncHandler(async (_req: Request, res
   return ok(res, rows);
 }));
 
-// Created by Super Admin only (§5.16)
+// ─── Create (Super Admin only) ────────────────────────────────────────────────
 communityPageRoutes.post('/', requireAuth, requireRole('SUPER_ADMIN'), validate(createPageSchema), asyncHandler(async (req: Request, res: Response) => {
   const page = await pagesService.createPage({ ...req.body, createdById: req.actor!.userId });
   return created(res, page);
 }));
 
+// ─── Get single page ──────────────────────────────────────────────────────────
 communityPageRoutes.get('/:pageId', requireAuth, asyncHandler(async (req: Request, res: Response) => {
   const page = await pagesService.getPage(req.params.pageId as string);
   return ok(res, page);
 }));
 
-// Page owners manage only their page; blocked when subscription expired (§5.16)
+// ─── Owner edit (restricted fields only) ─────────────────────────────────────
 communityPageRoutes.patch('/:pageId', requireAuth, validate(updatePageSchema), asyncHandler(async (req: Request, res: Response) => {
   const page = await pagesService.updatePage(req.params.pageId as string, req.body, { userId: req.actor!.userId, isSuperAdmin: req.actor!.isSuperAdmin });
   return ok(res, page);
 }));
 
-// Join Community flow
+// ─── Super Admin full update (subscription + visibility + owners) ─────────────
+communityPageRoutes.patch('/:pageId/admin', requireAuth, requireRole('SUPER_ADMIN'), validate(superAdminUpdateSchema), asyncHandler(async (req: Request, res: Response) => {
+  const page = await pagesService.superAdminUpdatePage(req.params.pageId as string, req.body);
+  return ok(res, page);
+}));
+
+// ─── Delete (Super Admin only) ────────────────────────────────────────────────
+communityPageRoutes.delete('/:pageId', requireAuth, requireRole('SUPER_ADMIN'), asyncHandler(async (req: Request, res: Response) => {
+  await prisma.communityPage.update({ where: { id: req.params.pageId as string }, data: { deletedAt: new Date() } });
+  return ok(res, { deleted: true });
+}));
+
+// ─── Join Community ───────────────────────────────────────────────────────────
 communityPageRoutes.post('/:pageId/join', requireAuth, asyncHandler(async (req: Request, res: Response) => {
   const member = await requireMember(req.actor!.userId);
   const membership = await pagesService.joinPage(req.params.pageId as string, member.id);
   return created(res, membership);
 }));
 
+// ─── Leave Community ──────────────────────────────────────────────────────────
+communityPageRoutes.post('/:pageId/leave', requireAuth, asyncHandler(async (req: Request, res: Response) => {
+  const member = await requireMember(req.actor!.userId);
+  await pagesService.leavePage(req.params.pageId as string, member.id);
+  return ok(res, { left: true });
+}));
+
+// ─── Member decision (Approve / Reject) ──────────────────────────────────────
 communityPageRoutes.post('/:pageId/members/decision', requireAuth, validate(membershipDecisionSchema), asyncHandler(async (req: Request, res: Response) => {
   const row = await pagesService.decideMembership(req.params.pageId as string, req.body.memberId, req.body.decision, { userId: req.actor!.userId, isSuperAdmin: req.actor!.isSuperAdmin });
   return ok(res, row);
 }));
 
+// ─── Remove member (owner action) ────────────────────────────────────────────
+communityPageRoutes.delete('/:pageId/members/:memberId', requireAuth, asyncHandler(async (req: Request, res: Response) => {
+  await pagesService.removeMember(req.params.pageId as string, req.params.memberId as string, { userId: req.actor!.userId, isSuperAdmin: req.actor!.isSuperAdmin });
+  return ok(res, { removed: true });
+}));
+
+// ─── List members (with status filter) ───────────────────────────────────────
 communityPageRoutes.get('/:pageId/members', requireAuth, asyncHandler(async (req: Request, res: Response) => {
   const status = (req.query.status as 'PENDING' | 'APPROVED' | 'REJECTED') ?? 'APPROVED';
   const rows = await pagesService.listPageMembers(req.params.pageId as string, status, { userId: req.actor!.userId, isSuperAdmin: req.actor!.isSuperAdmin });
   return ok(res, rows);
 }));
 
-// Subscription — Super Admin only (§5.16)
-communityPageRoutes.patch('/:pageId/subscription', requireAuth, requireRole('SUPER_ADMIN'), validate(subscriptionSchema), asyncHandler(async (req: Request, res: Response) => {
+// ─── Page feed ────────────────────────────────────────────────────────────────
+communityPageRoutes.get('/:pageId/feed', requireAuth, asyncHandler(async (req: Request, res: Response) => {
+  const posts = await pagesService.getPageFeed(req.params.pageId as string);
+  return ok(res, posts);
+}));
+
+// ─── Create post on page ──────────────────────────────────────────────────────
+communityPageRoutes.post('/:pageId/posts', requireAuth, asyncHandler(async (req: Request, res: Response) => {
+  const post = await pagesService.createPagePost(req.params.pageId as string, req.body, { userId: req.actor!.userId, isSuperAdmin: req.actor!.isSuperAdmin });
+  return created(res, post);
+}));
+
+// ─── Subscription (Super Admin only) ─────────────────────────────────────────
+communityPageRoutes.patch('/:pageId/subscription', requireAuth, requireRole('SUPER_ADMIN'), asyncHandler(async (req: Request, res: Response) => {
   const page = await pagesService.updateSubscription(req.params.pageId as string, req.body);
   return ok(res, page);
 }));
 
+// ─── Analytics ────────────────────────────────────────────────────────────────
 communityPageRoutes.get('/:pageId/analytics', requireAuth, asyncHandler(async (req: Request, res: Response) => {
   const analytics = await pagesService.pageAnalytics(req.params.pageId as string, { userId: req.actor!.userId, isSuperAdmin: req.actor!.isSuperAdmin });
   return ok(res, analytics);

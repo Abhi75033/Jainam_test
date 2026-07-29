@@ -296,6 +296,30 @@ export async function enterDailyJatraCount(participantId: string, date: Date, co
   return { ...result.row, progressPct: Math.min(pct, 100) };
 }
 
+export async function enterBulkDailyJatraCounts(
+  tourId: string,
+  entries: Array<{ participantId: string; date: Date; count: number; status?: 'PRESENT' | 'ABSENT' | 'NOT_WELL'; remarks?: string }>,
+  enteredById: string
+) {
+  const tour = await prisma.tour.findUnique({ where: { id: tourId } });
+  if (!tour) throw ApiError.notFound('Tour not found');
+
+  const results = [];
+  for (const entry of entries) {
+    const res = await enterDailyJatraCount(entry.participantId, new Date(entry.date), entry.count, enteredById);
+    if (entry.status) {
+      const day = new Date(Date.UTC(new Date(entry.date).getUTCFullYear(), new Date(entry.date).getUTCMonth(), new Date(entry.date).getUTCDate()));
+      await prisma.tourAttendance.upsert({
+        where: { participantId_date: { participantId: entry.participantId, date: day } },
+        update: { status: entry.status, remarks: entry.remarks },
+        create: { participantId: entry.participantId, date: day, status: entry.status, remarks: entry.remarks },
+      });
+    }
+    results.push(res);
+  }
+  return results;
+}
+
 /** Milestone/progress summary consumed by the admin panel's jatra page. */
 export async function participantMilestoneProgress(participantId: string) {
   const participant = await prisma.tourParticipant.findUnique({

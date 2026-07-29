@@ -153,14 +153,36 @@ masterDataRoutes.post('/:listKey', requireAuth, requireRole('SUPER_ADMIN'), vali
   return created(res, row);
 }));
 
-masterDataRoutes.patch('/:listKey/:id', requireAuth, requireRole('SUPER_ADMIN'), validate(nameSchema), asyncHandler(async (req: Request, res: Response) => {
+masterDataRoutes.patch('/:listKey/:id', requireAuth, validate(nameSchema), asyncHandler(async (req: Request, res: Response) => {
+  if (req.params.listKey === 'donation-categories') {
+    const hasReceipts = await prisma.donationCategorySplit.findFirst({
+      where: { donationCategoryId: req.params.id as string, donation: { receipt: { isNot: null } } }
+    });
+    if (hasReceipts && !req.actor!.isSuperAdmin) {
+      throw ApiError.forbidden('Receipts have already been issued under this donation category. Only Super Admin can edit it.');
+    }
+  } else if (!req.actor!.isSuperAdmin) {
+    throw ApiError.forbidden('Super Admin role required');
+  }
+
   const model = getModel(req.params.listKey as string);
   const row = await model.update({ where: { id: req.params.id as string }, data: { name: req.body.name } });
   return ok(res, row);
 }));
 
-// Soft delete — Super Admin only (per §3 delete rules; e.g. donation category delete)
-masterDataRoutes.delete('/:listKey/:id', requireAuth, requireRole('SUPER_ADMIN'), asyncHandler(async (req: Request, res: Response) => {
+// Soft delete — Super Admin only (per §3 delete rules; e.g. donation category delete with §4.16.3 item 6 lock check)
+masterDataRoutes.delete('/:listKey/:id', requireAuth, asyncHandler(async (req: Request, res: Response) => {
+  if (req.params.listKey === 'donation-categories') {
+    const hasReceipts = await prisma.donationCategorySplit.findFirst({
+      where: { donationCategoryId: req.params.id as string, donation: { receipt: { isNot: null } } }
+    });
+    if (hasReceipts && !req.actor!.isSuperAdmin) {
+      throw ApiError.forbidden('Receipts have already been issued under this donation category. Only Super Admin can delete it.');
+    }
+  } else if (!req.actor!.isSuperAdmin) {
+    throw ApiError.forbidden('Super Admin role required');
+  }
+
   const model = getModel(req.params.listKey as string);
   const row = await model.update({ where: { id: req.params.id as string }, data: { deletedAt: new Date() } });
   return ok(res, row);
