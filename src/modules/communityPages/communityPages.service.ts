@@ -195,10 +195,10 @@ export async function listPageMembers(pageId: string, status: 'PENDING' | 'APPRO
           publicId: true,
           fullName: true,
           photoUrl: true,
-          city: true,
-          state: true,
-          sect: true,
-          subSect: true,
+          mobile: true,
+          currentAddress: true,
+          community: { select: { name: true } },
+          subCommunity: { select: { name: true } },
         },
       },
     },
@@ -246,7 +246,7 @@ export async function createPagePost(pageId: string, input: Record<string, unkno
     await enqueueNotification({
       userId: m.member.userId,
       templateKey: 'PAGE_NEW_POST',
-      category: 'COMMUNITY',
+      category: 'SERVICE',
       to: { IN_APP: m.member.userId },
       body: `${page.name} published a new update.`,
     });
