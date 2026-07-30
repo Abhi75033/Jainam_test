@@ -449,6 +449,18 @@ export async function getBookingWithTimeline(bookingId: string) {
 }
 
 /** Org admin occupancy view (§5.7). */
+export async function listOrgBookings(organizationId: string, query: { status?: BookingStatus; page: number; pageSize: number }) {
+  const where: Prisma.BookingWhereInput = { organizationId, deletedAt: null, status: query.status };
+  const [total, rows] = await Promise.all([
+    prisma.booking.count({ where }),
+    prisma.booking.findMany({
+      where,
+      include: { bookingItem: { select: { name: true } }, member: { select: { fullName: true, publicId: true } } },
+      orderBy: { createdAt: 'desc' },
+      skip: (query.page - 1) * query.pageSize,
+      take: query.pageSize,
+    }),
+  ]);
   return { total, rows };
 }
 
