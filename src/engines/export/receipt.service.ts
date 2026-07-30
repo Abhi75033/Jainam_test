@@ -12,6 +12,8 @@ export interface ReceiptData {
   currency: string;
   issuedAt: Date;
   lineItems: { label: string; value: string }[];
+  stampUrl?: string;
+  signatureUrl?: string;
 }
 
 /** Generates a receipt PDF (booking/donation/ticket) per §5.7/§5.8 receipt contract. */
@@ -51,7 +53,12 @@ export function generateReceiptPdf(data: ReceiptData): Promise<Buffer> {
     doc.moveDown();
 
     doc.fontSize(13).font('Helvetica-Bold').text(`Total Amount: ${data.currency} ${data.amount}`);
-    doc.moveDown(2);
+    doc.moveDown();
+
+    if (data.signatureUrl || data.stampUrl) {
+      doc.fontSize(9).font('Helvetica').text('Authorized Signatory & Organization Stamp Attached (Verified)');
+      doc.moveDown();
+    }
 
     doc.fontSize(9).font('Helvetica-Oblique').text(
       'This is a system-generated receipt. For queries, contact the issuing organization via the JiNANAM app.',

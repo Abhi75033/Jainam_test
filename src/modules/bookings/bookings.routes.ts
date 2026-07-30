@@ -43,6 +43,10 @@ bookingRoutes.post('/:bookingId/payment-verification', requireAuth, requirePermi
 bookingRoutes.get('/org/:organizationId', requireAuth, requirePermission('BOOKINGS', 'VIEW'), scopeToOrganization, bookingsController.orgBookings);
 bookingRoutes.get('/org/:organizationId/export', requireAuth, requirePermission('BOOKINGS', 'VIEW'), scopeToOrganization, bookingsController.orgBookingsExport);
 
-// Booking Calendar — aggregated view by month for calendar page
-bookingRoutes.get('/calendar', requireAuth, requirePermission('BOOKINGS', 'VIEW'), bookingsController.bookingCalendar);
+// Stay Operations (Front Desk Daily Operations — Pillar 3)
+bookingRoutes.post('/:bookingId/check-in', requireAuth, requirePermission('BOOKINGS', 'EDIT'), bookingsController.checkInBooking);
+bookingRoutes.post('/:bookingId/check-out', requireAuth, requirePermission('BOOKINGS', 'EDIT'), bookingsController.checkOutBooking);
+bookingRoutes.post('/:bookingId/transfer-room', requireAuth, requirePermission('BOOKINGS', 'EDIT'), bookingsController.transferRoom);
+bookingRoutes.post('/:bookingId/extend-stay', requireAuth, requirePermission('BOOKINGS', 'EDIT'), bookingsController.extendStay);
+bookingRoutes.patch('/rooms/:roomId/housekeeping', requireAuth, requirePermission('BOOKINGS', 'EDIT'), bookingsController.updateHousekeepingStatus);
 

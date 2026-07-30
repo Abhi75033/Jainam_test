@@ -213,3 +213,28 @@ export const bookingCalendar = asyncHandler(async (req: Request, res: Response) 
     })),
   });
 });
+
+export const checkInBooking = asyncHandler(async (req: Request, res: Response) => {
+  const booking = await bookingsService.checkInBooking(req.params.bookingId as string, req.body, req.actor!.userId);
+  return ok(res, booking);
+});
+
+export const checkOutBooking = asyncHandler(async (req: Request, res: Response) => {
+  const booking = await bookingsService.checkOutBooking(req.params.bookingId as string, req.body, req.actor!.userId);
+  return ok(res, booking);
+});
+
+export const transferRoom = asyncHandler(async (req: Request, res: Response) => {
+  const booking = await bookingsService.transferRoom(req.params.bookingId as string, req.body.newRoomId, req.body.reason, req.actor!.userId);
+  return ok(res, booking);
+});
+
+export const extendStay = asyncHandler(async (req: Request, res: Response) => {
+  const booking = await bookingsService.extendStay(req.params.bookingId as string, Number(req.body.additionalDays), req.actor!.userId);
+  return ok(res, booking);
+});
+
+export const updateHousekeepingStatus = asyncHandler(async (req: Request, res: Response) => {
+  const room = await bookingsService.updateHousekeepingStatus(req.params.roomId as string, req.body.status);
+  return ok(res, room);
+});

@@ -609,6 +609,7 @@ model Organization {
   dharamshalaContact      String?
   dharamshalaContactMemberId String?
   dharamshalaOnline       String?
+  receiptConfig           Json? // Receipt template setup (stampUrl, signatureUrl, trustName, terms, gst, pan)
   pathshalaTimings        String?
   pathshalaDays           String?
   pathshalaTeacher        String?
@@ -910,10 +911,18 @@ enum RoomType {
   ROOM
   HALL
   DORMITORY
+  LOCKER
+  COTTAGE
+  SUITE
+  APARTMENT
 }
 
 enum RoomStatus {
   AVAILABLE
+  OCCUPIED
+  DIRTY
+  UNDER_CLEANING
+  READY
   UNAVAILABLE
   MAINTENANCE
 }
@@ -1583,6 +1592,8 @@ enum BookingStatus {
   PAYMENT_PENDING
   PAYMENT_VERIFICATION
   CONFIRMED
+  CHECKED_IN
+  CHECKED_OUT
   REJECTED
   CANCELLED
   COMPLETED
@@ -1611,6 +1622,20 @@ model Booking {
   paymentNotes           String?
   rejectionReason        String?
   idempotencyKey         String?       @unique
+
+  // Stay Management (Front Desk Operations)
+  checkInTime            DateTime?
+  checkOutTime           DateTime?
+  allocatedRoomId        String?
+  vehicleNumber          String?
+  idProofType            String?
+  idProofNumber          String?
+  additionalGuests       Int?          @default(0)
+  additionalCharges      Decimal?      @default(0) @db.Decimal(12, 2)
+  splitPayments          Json?         // [{ mode: 'CASH'|'UPI'|'CARD'|'CHEQUE', amount: 1000 }]
+  stayNotes              String?
+  transferredFromRoomId  String?
+
   createdById            String?
   updatedById            String?
   createdAt              DateTime      @default(now())

@@ -449,17 +449,142 @@ export async function getBookingWithTimeline(bookingId: string) {
 }
 
 /** Org admin occupancy view (§5.7). */
-export async function listOrgBookings(organizationId: string, query: { status?: BookingStatus; page: number; pageSize: number }) {
-  const where: Prisma.BookingWhereInput = { organizationId, deletedAt: null, status: query.status };
-  const [total, rows] = await Promise.all([
-    prisma.booking.count({ where }),
-    prisma.booking.findMany({
-      where,
-      include: { bookingItem: { select: { name: true } }, member: { select: { fullName: true, publicId: true } } },
-      orderBy: { createdAt: 'desc' },
-      skip: (query.page - 1) * query.pageSize,
-      take: query.pageSize,
-    }),
-  ]);
   return { total, rows };
+}
+
+// -----------------------------------------------------------------------------
+// Stay Operations (Front Desk Daily Operations — Pillar 3)
+// -----------------------------------------------------------------------------
+
+export async function checkInBooking(bookingId: string, input: {
+  roomId?: string;
+  vehicleNumber?: string;
+  idProofType?: string;
+  idProofNumber?: string;
+  additionalGuests?: number;
+  stayNotes?: string;
+}, actorUserId: string) {
+  const booking = await prisma.booking.findUnique({ where: { id: bookingId }, include: { member: true } });
+  if (!booking) throw ApiError.notFound('Booking not found');
+
+  const roomId = input.roomId || booking.allocatedRoomId;
+
+  const updated = await prisma.booking.update({
+    where: { id: bookingId },
+    data: {
+      status: 'CHECKED_IN',
+      checkInTime: new Date(),
+      allocatedRoomId: roomId ?? undefined,
+      vehicleNumber: input.vehicleNumber,
+      idProofType: input.idProofType,
+      idProofNumber: input.idProofNumber,
+      additionalGuests: input.additionalGuests ?? 0,
+      stayNotes: input.stayNotes,
+      updatedById: actorUserId,
+    },
+  });
+
+  if (roomId) {
+    await prisma.roomOrHall.update({ where: { id: roomId }, data: { status: 'OCCUPIED' } }).catch(() => {});
+  }
+
+  await pushStatus(bookingId, 'CHECKED_IN', actorUserId, `Checked in at front desk`);
+
+  await enqueueNotification({
+    userId: booking.member.userId,
+    templateKey: 'STAY_CHECKED_IN',
+    category: 'SERVICE',
+    to: { PUSH: booking.member.userId, IN_APP: booking.member.userId },
+    body: `Check-in complete for ${booking.publicId}. Welcome to your stay!`,
+  });
+
+  return updated;
+}
+
+export async function checkOutBooking(bookingId: string, input: {
+  additionalCharges?: number;
+  splitPayments?: { mode: string; amount: number }[];
+  notes?: string;
+}, actorUserId: string) {
+  const booking = await prisma.booking.findUnique({ where: { id: bookingId }, include: { member: true } });
+  if (!booking) throw ApiError.notFound('Booking not found');
+
+  const updated = await prisma.booking.update({
+    where: { id: bookingId },
+    data: {
+      status: 'CHECKED_OUT',
+      checkOutTime: new Date(),
+      additionalCharges: input.additionalCharges ?? 0,
+      splitPayments: (input.splitPayments ?? []) as Prisma.InputJsonValue,
+      updatedById: actorUserId,
+    },
+  });
+
+  if (booking.allocatedRoomId) {
+    await prisma.roomOrHall.update({ where: { id: booking.allocatedRoomId }, data: { status: 'DIRTY' } }).catch(() => {});
+  }
+
+  await pushStatus(bookingId, 'CHECKED_OUT', actorUserId, `Checked out at front desk`);
+  await issueBookingReceipt(bookingId);
+
+  await enqueueNotification({
+    userId: booking.member.userId,
+    templateKey: 'STAY_CHECKED_OUT',
+    category: 'SERVICE',
+    to: { PUSH: booking.member.userId, IN_APP: booking.member.userId },
+    body: `Check-out complete for ${booking.publicId}. Thank you for staying with us! Your final receipt is available.`,
+  });
+
+  return updated;
+}
+
+export async function transferRoom(bookingId: string, newRoomId: string, reason: string, actorUserId: string) {
+  const booking = await prisma.booking.findUnique({ where: { id: bookingId } });
+  if (!booking) throw ApiError.notFound('Booking not found');
+
+  const oldRoomId = booking.allocatedRoomId;
+
+  const updated = await prisma.booking.update({
+    where: { id: bookingId },
+    data: {
+      allocatedRoomId: newRoomId,
+      transferredFromRoomId: oldRoomId ?? undefined,
+      updatedById: actorUserId,
+    },
+  });
+
+  if (oldRoomId) {
+    await prisma.roomOrHall.update({ where: { id: oldRoomId }, data: { status: 'DIRTY' } }).catch(() => {});
+  }
+  await prisma.roomOrHall.update({ where: { id: newRoomId }, data: { status: 'OCCUPIED' } }).catch(() => {});
+
+  await pushStatus(bookingId, 'CHECKED_IN', actorUserId, `Room transferred from ${oldRoomId || 'N/A'} to ${newRoomId}. Reason: ${reason}`);
+  return updated;
+}
+
+export async function extendStay(bookingId: string, additionalDays: number, actorUserId: string) {
+  const booking = await prisma.booking.findUnique({ where: { id: bookingId }, include: { bookingItem: true } });
+  if (!booking) throw ApiError.notFound('Booking not found');
+
+  const currentEndDate = booking.dateTo ? new Date(booking.dateTo) : new Date(booking.dateFrom);
+  const newEndDate = new Date(currentEndDate.getTime() + additionalDays * 24 * 3600_000);
+
+  const extraAmount = Number(booking.bookingItem.chargeAmount || 0) * additionalDays;
+  const newTotalAmount = Number(booking.amount) + extraAmount;
+
+  const updated = await prisma.booking.update({
+    where: { id: bookingId },
+    data: {
+      dateTo: newEndDate,
+      amount: newTotalAmount,
+      updatedById: actorUserId,
+    },
+  });
+
+  await pushStatus(bookingId, booking.status, actorUserId, `Stay extended by ${additionalDays} days. New total amount: INR ${newTotalAmount}`);
+  return updated;
+}
+
+export async function updateHousekeepingStatus(roomId: string, status: 'AVAILABLE' | 'OCCUPIED' | 'DIRTY' | 'UNDER_CLEANING' | 'READY' | 'MAINTENANCE') {
+  return prisma.roomOrHall.update({ where: { id: roomId }, data: { status } });
 }

@@ -14,8 +14,23 @@ import { getEligibleMemberIds } from '@/engines/visibility/visibility.service';
 
 const DAY_MS = 24 * 3600_000;
 
+export function computeFeaturedUntil(startAt: Date, endAt: Date): Date {
+  const durationDays = Math.ceil((endAt.getTime() - startAt.getTime()) / DAY_MS);
+  let featuredDays = 3;
+  if (durationDays > 90) {
+    featuredDays = 30;
+  } else if (durationDays > 30) {
+    featuredDays = 10;
+  }
+  return new Date(startAt.getTime() + featuredDays * DAY_MS);
+}
+
 export async function createOffer(input: Record<string, unknown> & { createdById: string }) {
   const { createdById, contact, links, visibilityConfig, ...rest } = input as any;
+
+  const startAt = new Date(rest.startAt);
+  const endAt = new Date(rest.endAt);
+  const featuredUntil = computeFeaturedUntil(startAt, endAt);
 
   const offer = await prisma.$transaction(async (tx) => {
     const publicId = await nextPublicId('OFFER', tx);
@@ -23,6 +38,8 @@ export async function createOffer(input: Record<string, unknown> & { createdById
       data: {
         publicId,
         ...rest,
+        isFeatured: true,
+        featuredUntil,
         contact: contact as Prisma.InputJsonValue,
         links: links as Prisma.InputJsonValue,
         visibilityConfig: visibilityConfig as Prisma.InputJsonValue,
