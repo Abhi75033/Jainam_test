@@ -269,3 +269,147 @@ export async function logout(userId: string, deviceId: string) {
     data: { isRevoked: true, refreshTokenHash: null },
   });
 }
+
+/** Email + Password Authentication for Admins & International Members */
+export async function loginWithEmailPassword(input: { email: string; password: string; device: DeviceMeta }) {
+  const emailNormalized = input.email.trim().toLowerCase();
+  const user = await prisma.user.findFirst({ where: { email: emailNormalized, deletedAt: null } });
+  const deviceId = resolveDeviceId(input.device);
+
+  if (!user || !user.passwordHash) {
+    throw ApiError.unauthorized('Invalid email or password');
+  }
+
+  if (['SUSPENDED', 'BLOCKED', 'DELETED'].includes(user.status)) {
+    throw ApiError.forbidden(`Account is ${user.status.toLowerCase()}. Contact support.`);
+  }
+
+  const valid = await bcrypt.compare(input.password, user.passwordHash);
+  if (!valid) {
+    throw ApiError.unauthorized('Invalid email or password');
+  }
+
+  const suspicious = await flagSuspiciousIfNeeded(user.id, user.mobile || user.email || 'unknown');
+  const { accessToken, refreshToken } = await issueTokensForUser(user, input.device);
+
+  await prisma.$transaction([
+    prisma.loginHistory.create({
+      data: { userId: user.id, mobile: user.mobile || user.email || '', deviceId, ip: input.device.ip, success: true, flaggedSuspicious: suspicious },
+    }),
+    prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } }),
+  ]);
+
+  return { user, accessToken, refreshToken, suspicious };
+}
+
+/** Request OTP for Email Address */
+export async function requestEmailOtp(email: string) {
+  const emailNormalized = email.trim().toLowerCase();
+  const { emailAdapter } = await import('@/engines/notification/adapters/email.adapter');
+  const key = `email_otp:${emailNormalized}`;
+  const otp = crypto.randomInt(100000, 999999).toString();
+  const { redis } = await import('@/config/redis');
+
+  await redis.set(key, otp, 'EX', 600); // 10 minutes
+
+  // Dispatch Email OTP
+  try {
+    await emailAdapter.send({
+      userId: emailNormalized,
+      to: emailNormalized,
+      subject: 'Your JiNANAM Login Verification Code',
+      body: `Your one-time email verification code is: ${otp}. Valid for 10 minutes.`,
+    });
+  } catch (err: any) {
+    logger.warn({ email, error: err.message }, 'Failed to send email OTP via SMTP, returning code in dev log');
+  }
+
+  return { expiresInSeconds: 600, devOtp: process.env.NODE_ENV === 'production' ? undefined : otp };
+}
+
+/** Verify Email OTP and Authenticate User */
+export async function verifyEmailOtp(input: { email: string; otp: string; device: DeviceMeta }) {
+  const emailNormalized = input.email.trim().toLowerCase();
+  const { redis } = await import('@/config/redis');
+  const key = `email_otp:${emailNormalized}`;
+  const storedOtp = await redis.get(key);
+
+  if (!storedOtp || storedOtp !== input.otp) {
+    throw new ApiError('VALIDATION_ERROR', 'Invalid or expired Email OTP code', { otp: ['Invalid or expired Email OTP code'] });
+  }
+
+  await redis.del(key);
+
+  let user = await prisma.user.findFirst({ where: { email: emailNormalized, deletedAt: null } });
+
+  if (!user) {
+    user = await prisma.user.create({
+      data: {
+        mobile: `email:${emailNormalized}`,
+        email: emailNormalized,
+        emailVerifiedAt: new Date(),
+        status: 'ACTIVE',
+        primaryRoleKey: 'MEMBER',
+      },
+    });
+  } else if (!user.emailVerifiedAt) {
+    user = await prisma.user.update({ where: { id: user.id }, data: { emailVerifiedAt: new Date() } });
+  }
+
+  const suspicious = await flagSuspiciousIfNeeded(user.id, user.mobile || user.email || 'unknown');
+  const { accessToken, refreshToken } = await issueTokensForUser(user, input.device);
+
+  await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
+
+  return { user, accessToken, refreshToken, suspicious };
+}
+
+/** Google OAuth Authentication */
+export async function loginWithGoogle(input: {
+  email: string;
+  googleId?: string;
+  firstName?: string;
+  lastName?: string;
+  photoUrl?: string;
+  device: DeviceMeta;
+}) {
+  const emailNormalized = input.email.trim().toLowerCase();
+
+  let user = await prisma.user.findFirst({ where: { email: emailNormalized, deletedAt: null } });
+
+  if (!user) {
+    user = await prisma.user.create({
+      data: {
+        mobile: `google:${emailNormalized}`,
+        email: emailNormalized,
+        firstName: input.firstName || 'User',
+        lastName: input.lastName || '',
+        photoUrl: input.photoUrl || null,
+        emailVerifiedAt: new Date(),
+        status: 'ACTIVE',
+        primaryRoleKey: 'MEMBER',
+      },
+    });
+  } else {
+    if (['SUSPENDED', 'BLOCKED', 'DELETED'].includes(user.status)) {
+      throw ApiError.forbidden(`Account is ${user.status.toLowerCase()}. Contact support.`);
+    }
+    if (!user.emailVerifiedAt || (input.photoUrl && !user.photoUrl)) {
+      user = await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          emailVerifiedAt: user.emailVerifiedAt || new Date(),
+          photoUrl: user.photoUrl || input.photoUrl,
+        },
+      });
+    }
+  }
+
+  const suspicious = await flagSuspiciousIfNeeded(user.id, user.mobile || user.email || 'unknown');
+  const { accessToken, refreshToken } = await issueTokensForUser(user, input.device);
+
+  await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
+
+  return { user, accessToken, refreshToken, suspicious };
+}
+

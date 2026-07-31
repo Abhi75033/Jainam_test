@@ -31,6 +31,36 @@ export const loginPasswordSchema = z.object({
   }).merge(deviceInfoSchema),
 });
 
+export const loginEmailPasswordSchema = z.object({
+  body: z.object({
+    email: z.string().email(),
+    password: z.string().min(6),
+  }).merge(deviceInfoSchema),
+});
+
+export const requestEmailOtpSchema = z.object({
+  body: z.object({
+    email: z.string().email(),
+  }),
+});
+
+export const verifyEmailOtpSchema = z.object({
+  body: z.object({
+    email: z.string().email(),
+    otp: z.string().length(6),
+  }).merge(deviceInfoSchema),
+});
+
+export const loginGoogleSchema = z.object({
+  body: z.object({
+    email: z.string().email(),
+    googleId: z.string().optional(),
+    firstName: z.string().optional(),
+    lastName: z.string().optional(),
+    photoUrl: z.string().optional(),
+  }).merge(deviceInfoSchema),
+});
+
 export const refreshTokenSchema = z.object({
   body: z.object({
     refreshToken: z.string().min(10),

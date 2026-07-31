@@ -50,6 +50,66 @@ export const loginWithPassword = asyncHandler(async (req: Request, res: Response
   });
 });
 
+export const loginWithEmailPassword = asyncHandler(async (req: Request, res: Response) => {
+  const { email, password, deviceId, deviceType, os, appVersion } = req.body;
+  const result = await authService.loginWithEmailPassword({
+    email,
+    password,
+    device: { deviceId, deviceType, os, appVersion, ip: req.ip },
+  });
+  return ok(res, {
+    userId: result.user.id,
+    publicId: result.user.publicId,
+    role: result.user.primaryRoleKey,
+    accessToken: result.accessToken,
+    refreshToken: result.refreshToken,
+    suspiciousActivity: result.suspicious,
+  });
+});
+
+export const requestEmailOtp = asyncHandler(async (req: Request, res: Response) => {
+  const { email } = req.body;
+  const result = await authService.requestEmailOtp(email);
+  return ok(res, result);
+});
+
+export const verifyEmailOtp = asyncHandler(async (req: Request, res: Response) => {
+  const { email, otp, deviceId, deviceType, os, appVersion } = req.body;
+  const result = await authService.verifyEmailOtp({
+    email,
+    otp,
+    device: { deviceId, deviceType, os, appVersion, ip: req.ip },
+  });
+  return ok(res, {
+    userId: result.user.id,
+    publicId: result.user.publicId,
+    role: result.user.primaryRoleKey,
+    accessToken: result.accessToken,
+    refreshToken: result.refreshToken,
+    suspiciousActivity: result.suspicious,
+  });
+});
+
+export const loginWithGoogle = asyncHandler(async (req: Request, res: Response) => {
+  const { email, googleId, firstName, lastName, photoUrl, deviceId, deviceType, os, appVersion } = req.body;
+  const result = await authService.loginWithGoogle({
+    email,
+    googleId,
+    firstName,
+    lastName,
+    photoUrl,
+    device: { deviceId, deviceType, os, appVersion, ip: req.ip },
+  });
+  return ok(res, {
+    userId: result.user.id,
+    publicId: result.user.publicId,
+    role: result.user.primaryRoleKey,
+    accessToken: result.accessToken,
+    refreshToken: result.refreshToken,
+    suspiciousActivity: result.suspicious,
+  });
+});
+
 export const refresh = asyncHandler(async (req: Request, res: Response) => {
   const { refreshToken } = req.body;
   const result = await authService.refreshTokens(refreshToken);

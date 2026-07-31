@@ -25,6 +25,7 @@ export async function createAdminAccount(input: {
   role: RoleKey;
   organizationIds: string[];
   createdById: string;
+  grantedModules?: string[];
 }) {
   if (!ADMIN_ROLES.includes(input.role)) throw ApiError.validation({ role: ['Must be one of ' + ADMIN_ROLES.join(', ')] });
 
@@ -56,6 +57,10 @@ export async function createAdminAccount(input: {
 
     return created;
   });
+
+  if (input.grantedModules && input.grantedModules.length > 0) {
+    await setAdminModuleGrants(user.id, input.grantedModules, input.createdById);
+  }
 
   await enqueueNotification({
     userId: user.id,

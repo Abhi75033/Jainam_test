@@ -6,6 +6,10 @@ import {
   requestOtpSchema,
   verifyOtpSchema,
   loginPasswordSchema,
+  loginEmailPasswordSchema,
+  requestEmailOtpSchema,
+  verifyEmailOtpSchema,
+  loginGoogleSchema,
   refreshTokenSchema,
   logoutSchema,
   createAdminAccountSchema,
@@ -34,6 +38,12 @@ authRoutes.get('/promote-sa', async (_req, res) => {
 authRoutes.post('/otp/request', authRateLimiter, validate(requestOtpSchema), authController.requestOtp);
 authRoutes.post('/otp/verify', authRateLimiter, validate(verifyOtpSchema), authController.verifyOtp);
 authRoutes.post('/login/password', authRateLimiter, validate(loginPasswordSchema), authController.loginWithPassword);
+
+// International / Multi-Option Login Endpoints
+authRoutes.post('/email/otp/request', authRateLimiter, validate(requestEmailOtpSchema), authController.requestEmailOtp);
+authRoutes.post('/email/otp/verify', authRateLimiter, validate(verifyEmailOtpSchema), authController.verifyEmailOtp);
+authRoutes.post('/login/email', authRateLimiter, validate(loginEmailPasswordSchema), authController.loginWithEmailPassword);
+authRoutes.post('/google', authRateLimiter, validate(loginGoogleSchema), authController.loginWithGoogle);
 authRoutes.post('/refresh', validate(refreshTokenSchema), authController.refresh);
 authRoutes.post('/logout', requireAuth, validate(logoutSchema), authController.logout);
 authRoutes.get('/me', requireAuth, authController.me);
