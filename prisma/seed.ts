@@ -565,7 +565,7 @@ async function seedDemoData() {
     data: { userId: templeAdminUser.id, organizationId: temple.id, roleKey: 'TEMPLE_ADMIN' },
   });
 
-  // Demo Jain Members
+  // Demo Jain Members (mobile-only, for OTP login testing)
   for (let i = 1; i <= 3; i += 1) {
     const mobile = `+91900000000${i}`;
     const memberPublicId = await prisma.$transaction((tx) => nextPublicId('JAIN_MEMBER', tx));
@@ -595,7 +595,48 @@ async function seedDemoData() {
     });
   }
 
-  console.log('Seeded demo organizations (Temple, Dharamshala, Jain Center), 1 Temple Admin, 3 Jain Members');
+  // ── Demo Jain Member with Email + Password (for Login Page testing) ──────
+  const demoMemberMobile = '+919876543210';
+  const demoMemberEmail  = 'member@jinanam.app';
+  const existingDemoMember = await prisma.user.findFirst({
+    where: { OR: [{ mobile: demoMemberMobile }, { email: demoMemberEmail }] },
+  });
+
+  if (!existingDemoMember) {
+    const demoPublicId = await prisma.$transaction((tx) => nextPublicId('JAIN_MEMBER', tx));
+    const demoMemberUser = await prisma.user.create({
+      data: {
+        mobile: demoMemberMobile,
+        email: demoMemberEmail,
+        mobileVerifiedAt: new Date(),
+        emailVerifiedAt: new Date(),
+        passwordHash: await bcrypt.hash('Member@108', 10),
+        firstName: 'Rahul',
+        lastName: 'Shah',
+        primaryRoleKey: 'MEMBER',
+        status: 'ACTIVE',
+        publicId: demoPublicId,
+      },
+    });
+    await prisma.member.create({
+      data: {
+        userId: demoMemberUser.id,
+        publicId: demoPublicId,
+        category: 'JAIN',
+        firstName: 'Rahul',
+        surname: 'Shah',
+        fullName: 'Rahul Shah',
+        communityId: shwetambar.id,
+        mobile: demoMemberMobile,
+        mobileVerifiedAt: new Date(),
+        status: 'ACTIVE',
+        aadhaarHash: null,
+      },
+    });
+    console.log(`Seeded Demo Member → Email: ${demoMemberEmail} | Mobile: ${demoMemberMobile} | Password: Member@108`);
+  }
+
+  console.log('Seeded demo organizations (Temple, Dharamshala, Jain Center), 1 Temple Admin, 4 Jain Members');
 }
 
 async function main() {
