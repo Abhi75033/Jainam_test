@@ -487,112 +487,62 @@ async function seedSuperAdmin() {
 }
 
 // -----------------------------------------------------------------------------
-// 4. Demo organizations + members (for local testing / Definition-of-Done scripts)
+// 4. Demo Login Accounts (for testing authentication & authorization)
 // -----------------------------------------------------------------------------
 
 async function seedDemoData() {
-  const existingTemple = await prisma.organization.findFirst({ where: { name: 'Shree Shantinath Jain Derasar (Demo)' } });
-  if (existingTemple) {
-    console.log('Demo data already exists, skipping');
-    return;
-  }
-
   const shwetambar = await prisma.community.findUniqueOrThrow({ where: { name: 'Shwetambar' } });
 
-  const templePublicId = await prisma.$transaction((tx) => nextPublicId('TEMPLE', tx));
-  const temple = await prisma.organization.create({
-    data: {
-      publicId: templePublicId,
-      type: 'TEMPLE',
-      name: 'Shree Shantinath Jain Derasar (Demo)',
-      shortName: 'Shantinath Derasar',
-      status: 'ACTIVE',
-      communityId: shwetambar.id,
-      templeType: 'SHIKHAR_BADDHA',
-      city: 'Ahmedabad',
-      state: 'Gujarat',
-      country: 'India',
-      lat: 23.0225,
-      lng: 72.5714,
-      hasBhojanshala: true,
-      disclaimerText: 'Information provided is indicative; please confirm with temple administration.',
-    },
-  });
-
-  const dharamshalaPublicId = await prisma.$transaction((tx) => nextPublicId('DHARAMSHALA', tx));
-  await prisma.organization.create({
-    data: {
-      publicId: dharamshalaPublicId,
-      type: 'DHARAMSHALA',
-      name: 'JiNANAM Yatri Dharamshala (Demo)',
-      status: 'ACTIVE',
-      city: 'Palitana',
-      state: 'Gujarat',
-      country: 'India',
-      lat: 21.5222,
-      lng: 71.8266,
-    },
-  });
-
-  const jcPublicId = await prisma.$transaction((tx) => nextPublicId('JAIN_CENTER', tx));
-  await prisma.organization.create({
-    data: {
-      publicId: jcPublicId,
-      type: 'JAIN_CENTER',
-      name: 'JiNANAM Jain Center (Demo)',
-      status: 'ACTIVE',
-      city: 'Mumbai',
-      state: 'Maharashtra',
-      country: 'India',
-    },
-  });
-
-  // Demo Temple Admin
+  // ── Demo Temple Admin ──────────────────────────────────────────────────────
   const templeAdminMobile = '+919999900001';
-  const templeAdminUser = await prisma.user.create({
-    data: {
-      mobile: templeAdminMobile,
-      mobileVerifiedAt: new Date(),
-      passwordHash: await bcrypt.hash('ChangeMe@108', 10),
-      firstName: 'Demo',
-      lastName: 'TempleAdmin',
-      primaryRoleKey: 'TEMPLE_ADMIN',
-      status: 'ACTIVE',
-      createdByAdmin: true,
-    },
-  });
-  await prisma.userOrganization.create({
-    data: { userId: templeAdminUser.id, organizationId: temple.id, roleKey: 'TEMPLE_ADMIN' },
-  });
+  const existingTempleAdmin = await prisma.user.findUnique({ where: { mobile: templeAdminMobile } });
+  if (!existingTempleAdmin) {
+    await prisma.user.create({
+      data: {
+        mobile: templeAdminMobile,
+        mobileVerifiedAt: new Date(),
+        passwordHash: await bcrypt.hash('ChangeMe@108', 10),
+        firstName: 'Demo',
+        lastName: 'TempleAdmin',
+        primaryRoleKey: 'TEMPLE_ADMIN',
+        status: 'ACTIVE',
+        createdByAdmin: true,
+      },
+    });
+    console.log(`Seeded Demo Temple Admin → Mobile: ${templeAdminMobile} | Password: ChangeMe@108`);
+  }
 
-  // Demo Jain Members (mobile-only, for OTP login testing)
+  // ── Demo Jain Members (mobile-only, for OTP login testing) ─────────────────
   for (let i = 1; i <= 3; i += 1) {
     const mobile = `+91900000000${i}`;
-    const memberPublicId = await prisma.$transaction((tx) => nextPublicId('JAIN_MEMBER', tx));
-    const user = await prisma.user.create({
-      data: {
-        mobile,
-        mobileVerifiedAt: new Date(),
-        primaryRoleKey: 'MEMBER',
-        status: 'ACTIVE',
-        publicId: memberPublicId,
-      },
-    });
-    await prisma.member.create({
-      data: {
-        userId: user.id,
-        publicId: memberPublicId,
-        category: 'JAIN',
-        firstName: `Demo${i}`,
-        surname: 'Member',
-        fullName: `Demo${i} Member`,
-        communityId: shwetambar.id,
-        mobile,
-        mobileVerifiedAt: new Date(),
-        status: 'ACTIVE',
-        aadhaarHash: null,
-      },
-    });
+    const existingMember = await prisma.user.findUnique({ where: { mobile } });
+    if (!existingMember) {
+      const memberPublicId = await prisma.$transaction((tx) => nextPublicId('JAIN_MEMBER', tx));
+      const user = await prisma.user.create({
+        data: {
+          mobile,
+          mobileVerifiedAt: new Date(),
+          primaryRoleKey: 'MEMBER',
+          status: 'ACTIVE',
+          publicId: memberPublicId,
+        },
+      });
+      await prisma.member.create({
+        data: {
+          userId: user.id,
+          publicId: memberPublicId,
+          category: 'JAIN',
+          firstName: `Demo${i}`,
+          surname: 'Member',
+          fullName: `Demo${i} Member`,
+          communityId: shwetambar.id,
+          mobile,
+          mobileVerifiedAt: new Date(),
+          status: 'ACTIVE',
+          aadhaarHash: null,
+        },
+      });
+    }
   }
 
   // ── Demo Jain Member with Email + Password (for Login Page testing) ──────
@@ -636,7 +586,7 @@ async function seedDemoData() {
     console.log(`Seeded Demo Member → Email: ${demoMemberEmail} | Mobile: ${demoMemberMobile} | Password: Member@108`);
   }
 
-  console.log('Seeded demo organizations (Temple, Dharamshala, Jain Center), 1 Temple Admin, 4 Jain Members');
+  console.log('Seeded demo login accounts (Super Admin, Temple Admin, 4 Jain Members)');
 }
 
 async function main() {

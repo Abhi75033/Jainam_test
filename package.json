@@ -26,6 +26,7 @@
     "prisma:migrate:deploy": "prisma migrate deploy",
     "prisma:studio": "prisma studio",
     "seed": "tsx prisma/seed.ts",
+    "clean:db": "tsx scripts/clear-dummy-data.ts",
     "worker": "tsx watch src/jobs/worker.ts"
   },
   "dependencies": {
