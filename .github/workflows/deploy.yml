@@ -83,6 +83,9 @@ jobs:
             echo "⚙️ Generating Prisma Client..."
             npx prisma generate
 
+            echo "🌱 Seeding missing demo login accounts..."
+            npx tsx prisma/seed.ts
+
             echo "🏗️ Building project..."
             export NODE_OPTIONS="--max-old-space-size=2048"
             npm run build
